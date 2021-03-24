@@ -1,6 +1,7 @@
 #ifndef APPLICATION_FRAMEWORK_H
 #define APPLICATION_FRAMEWORK_H
 
+#include <d3d12.h>
 #include "GameTimer.h"
 
 class ApplicationFramework
