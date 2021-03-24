@@ -9,3 +9,14 @@ ApplicationFramework::~ApplicationFramework()
 {
     
 }
+
+
+bool ApplicationFramework::init()
+{
+    return true;
+}
+
+bool ApplicationFramework::run()
+{
+    return true;
+}
