@@ -13,18 +13,27 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="common">
+      <UniqueIdentifier>{bef114e8-dd84-4806-bc6d-5e4fec6eda7a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\application_framework\ApplicationFramework.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\common\GameTimer.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\ApplicationFramework.cpp">
+      <Filter>common</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\application_framework\ApplicationFramework.h">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="..\common\GameTimer.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\ApplicationFramework.h">
+      <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
