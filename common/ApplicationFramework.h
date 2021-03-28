@@ -3,6 +3,9 @@
 
 #include <wrl.h>
 #include <d3d12.h>
+#include <dxgi.h>
+#include <DirectXColors.h>
+#include "d3dx12.h"
 #include "utils.h"
 #include "GameTimer.h"
 
@@ -34,6 +37,10 @@ protected:
 
     void FlushCommandQueue();
 
+    ID3D12Resource* GetCurrentBackBuffer() const;
+    D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferView() const;
+    D3D12_CPU_DESCRIPTOR_HANDLE GetDepthStencilView() const;
+
     bool m4xMSAAState = false;
     UINT m4xMSAAQuality = 0;
 
@@ -41,8 +48,24 @@ protected:
 
     Microsoft::WRL::ComPtr<ID3D12Device> mDevice;
 
+    static const INT SwapChainBufferSize = 2;
+    INT mCurrentBackBufferIndex = 0;
+
+    Microsoft::WRL::ComPtr<IDXGISwapChain> mSwapChain;
+    Microsoft::WRL::ComPtr<ID3D12Resource> mSwapChainBuffer[SwapChainBufferSize];
+
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> mCommandQueue;
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> mCommandAllocator;
-    Microsoft::WRL::ComPtr<ID3D12CommandList> mCommandList;
+    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> mCommandList;
+
+    D3D12_VIEWPORT mScreenViewport;
+    D3D12_RECT mScissorRect;
+
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mRTVHeap;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mDSVHeap;
+
+    UINT mRTVDescriptorSize = 0;
+    UINT mDSVDescriptorSize = 0;
 
 };
 
