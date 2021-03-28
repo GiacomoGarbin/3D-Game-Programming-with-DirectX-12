@@ -1,7 +1,9 @@
 #ifndef APPLICATION_FRAMEWORK_H
 #define APPLICATION_FRAMEWORK_H
 
+#include <wrl.h>
 #include <d3d12.h>
+#include "utils.h"
 #include "GameTimer.h"
 
 class ApplicationFramework
@@ -10,14 +12,14 @@ public:
     ApplicationFramework();
     virtual ~ApplicationFramework();
 
-    bool init();
+    virtual bool init();
     bool run();
 
     //SetMSAA()
     //GetMSAA()
 
 protected:
-    virtual void CreateRTVAndDSTDescriptorHeaps();
+    virtual void CreateRTVAndDSVDescriptorHeaps();
     virtual void OnResize();
     virtual void update(GameTimer& timer) = 0;
     virtual void draw(GameTimer& timer) = 0;
@@ -36,6 +38,12 @@ protected:
     UINT m4xMSAAQuality = 0;
 
     GameTimer mGameTimer;
+
+    Microsoft::WRL::ComPtr<ID3D12Device> mDevice;
+
+    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> mCommandAllocator;
+    Microsoft::WRL::ComPtr<ID3D12CommandList> mCommandList;
+
 };
 
 #endif // APPLICATION_FRAMEWORK_H
