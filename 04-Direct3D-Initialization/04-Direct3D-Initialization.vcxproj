@@ -153,7 +153,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\common\ApplicationFramework.h" />
+    <ClInclude Include="..\common\d3dx12.h" />
     <ClInclude Include="..\common\GameTimer.h" />
+    <ClInclude Include="..\common\utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

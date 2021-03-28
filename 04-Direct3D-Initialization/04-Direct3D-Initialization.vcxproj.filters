@@ -35,5 +35,11 @@
     <ClInclude Include="..\common\ApplicationFramework.h">
       <Filter>common</Filter>
     </ClInclude>
+    <ClInclude Include="..\common\utils.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\d3dx12.h">
+      <Filter>common</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

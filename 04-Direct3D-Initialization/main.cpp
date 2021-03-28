@@ -36,9 +36,29 @@ void ApplicationInstance::draw(GameTimer& timer)
 {
 	ThrowIfFailed(mCommandAllocator->Reset());
 
-	//mCommandList->Reset(mCommandAllocator.Get(), nullptr);
+	ThrowIfFailed(mCommandList->Reset(mCommandAllocator.Get(), nullptr));
 
-	//ThrowIfFailed();
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+	mCommandList->RSSetViewports(1, &mScreenViewport);
+	mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::Black, 0, nullptr);
+	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
+
+	mCommandList->OMSetRenderTargets(1, &GetCurrentBackBufferView(), true, &GetDepthStencilView());
+
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+	ThrowIfFailed(mCommandList->Close());
+
+	ID3D12CommandList* CommandLists[] = { mCommandList.Get() };
+	mCommandQueue->ExecuteCommandLists(_countof(CommandLists), CommandLists);
+
+	ThrowIfFailed(mSwapChain->Present(0, 0));
+	mCurrentBackBufferIndex = (mCurrentBackBufferIndex + 1) % SwapChainBufferSize;
+
+	FlushCommandQueue();
 }
 
 int main()
