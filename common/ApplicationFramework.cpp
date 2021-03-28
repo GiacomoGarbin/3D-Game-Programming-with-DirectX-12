@@ -7,17 +7,102 @@ ApplicationFramework::ApplicationFramework()
 
 ApplicationFramework::~ApplicationFramework()
 {
-    
+    if (mDevice)
+    {
+        FlushCommandQueue();
+    }
 }
 
-
 bool ApplicationFramework::init()
+{
+    if (!InitMainWindow())
+    {
+        return false;
+    }
+
+    if (!InitDirect3D())
+    {
+        return false;
+    }
+
+    OnResize();
+
+    return true;
+}
+
+bool ApplicationFramework::InitMainWindow()
 {
     return true;
 }
 
+bool ApplicationFramework::InitDirect3D()
+{
+    ThrowIfFailed(CreateDXGIFactory(IID_PPV_ARGS(&mFactory)));
+
+    ThrowIfFailed(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&mDevice)));
+
+    ThrowIfFailed(mDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence)));
+
+    mRTVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    mDSVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+    CreateCommandObjects();
+    CreateSwapChain();
+    CreateRTVAndDSVDescriptorHeaps();
+
+    return true;
+}
+
+void ApplicationFramework::OnResize()
+{
+
+}
+
+void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
+{
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC desc;
+        desc.NumDescriptors = SwapChainBufferSize;
+        desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        desc.NodeMask = 0;
+
+        ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mRTVHeap.GetAddressOf())));
+    }
+
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC desc;
+        desc.NumDescriptors = 1;
+        desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        desc.NodeMask = 0;
+
+        ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mDSVHeap.GetAddressOf())));
+    }
+}
+
 bool ApplicationFramework::run()
 {
+    mGameTimer.reset();
+
+    while (true) // TODO: windows is open
+    {
+        {
+            mGameTimer.tick();
+
+            if (mApplicationPaused)
+            {
+                // frame stats
+                update(mGameTimer);
+                draw(mGameTimer);
+            }
+            else
+            {
+                Sleep(100);
+            }
+        }
+    }
+
     return true;
 }
 
@@ -34,4 +119,9 @@ D3D12_CPU_DESCRIPTOR_HANDLE ApplicationFramework::GetCurrentBackBufferView() con
 D3D12_CPU_DESCRIPTOR_HANDLE ApplicationFramework::GetDepthStencilView() const
 {
     return mDSVHeap->GetCPUDescriptorHandleForHeapStart();
+}
+
+void ApplicationFramework::FlushCommandQueue()
+{
+
 }

@@ -32,8 +32,8 @@ protected:
     bool InitMainWindow();
     bool InitDirect3D();
 
-    void CreateCommandObjects();
     void CreateSwapChain();
+    void CreateCommandObjects();
 
     void FlushCommandQueue();
 
@@ -46,7 +46,11 @@ protected:
 
     GameTimer mGameTimer;
 
+    Microsoft::WRL::ComPtr<IDXGIFactory> mFactory;
     Microsoft::WRL::ComPtr<ID3D12Device> mDevice;
+    
+    Microsoft::WRL::ComPtr<ID3D12Fence> mFence;
+    UINT64 mCurrentFence = 0;
 
     static const INT SwapChainBufferSize = 2;
     INT mCurrentBackBufferIndex = 0;
@@ -66,7 +70,6 @@ protected:
 
     UINT mRTVDescriptorSize = 0;
     UINT mDSVDescriptorSize = 0;
-
 };
 
 #endif // APPLICATION_FRAMEWORK_H
