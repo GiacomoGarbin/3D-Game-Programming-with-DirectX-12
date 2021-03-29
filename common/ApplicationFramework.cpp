@@ -53,7 +53,22 @@ bool ApplicationFramework::InitDirect3D()
     return true;
 }
 
-void ApplicationFramework::OnResize()
+void ApplicationFramework::CreateCommandObjects()
+{
+    D3D12_COMMAND_QUEUE_DESC desc;
+    desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+    ThrowIfFailed(mDevice->CreateCommandQueue(&desc, IID_PPV_ARGS(&mCommandQueue)));
+
+    ThrowIfFailed(mDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(mCommandAllocator.GetAddressOf())));
+
+    ThrowIfFailed(mDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, mCommandAllocator.Get(), nullptr, IID_PPV_ARGS(mCommandList.GetAddressOf())));
+
+    mCommandList->Close();
+}
+
+void ApplicationFramework::CreateSwapChain()
 {
 
 }
@@ -79,6 +94,11 @@ void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
 
         ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mDSVHeap.GetAddressOf())));
     }
+}
+
+void ApplicationFramework::OnResize()
+{
+
 }
 
 bool ApplicationFramework::run()
