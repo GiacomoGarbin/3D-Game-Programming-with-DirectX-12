@@ -5,9 +5,14 @@
 #include <d3d12.h>
 #include <dxgi.h>
 #include <DirectXColors.h>
+#include <d3d12sdklayers.h>
 #include "d3dx12.h"
 #include "utils.h"
 #include "GameTimer.h"
+
+#include <glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <glfw3native.h>
 
 class ApplicationFramework
 {
@@ -41,6 +46,9 @@ protected:
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferView() const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetDepthStencilView() const;
 
+    Microsoft::WRL::ComPtr<GLFWwindow> mMainWindow = nullptr;
+    bool mApplicationPaused = false;
+
     bool m4xMSAAState = false;
     UINT m4xMSAAQuality = 0;
 
@@ -70,6 +78,13 @@ protected:
 
     UINT mRTVDescriptorSize = 0;
     UINT mDSVDescriptorSize = 0;
+    UINT mCBVSRVUAVDescriptorSize = 0;
+
+    std::string mMainWindowTitle = "Application Framework";
+    DXGI_FORMAT mBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_FORMAT mDepthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    UINT mMainWindowWidth = 800;
+    UINT mMainWindowHeight = 600;
 };
 
 #endif // APPLICATION_FRAMEWORK_H
