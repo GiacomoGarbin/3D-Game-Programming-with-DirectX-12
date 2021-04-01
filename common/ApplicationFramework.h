@@ -1,18 +1,29 @@
 #ifndef APPLICATION_FRAMEWORK_H
 #define APPLICATION_FRAMEWORK_H
 
+// windows
 #include <wrl.h>
+
+// directx
 #include <d3d12.h>
 #include <dxgi.h>
 #include <DirectXColors.h>
 #include <d3d12sdklayers.h>
 #include "d3dx12.h"
-#include "utils.h"
-#include "GameTimer.h"
+#include <DirectXMath.h>
+using namespace DirectX;
 
+// glfw
 #include <glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <glfw3native.h>
+
+// std library
+#include <array>
+
+// common
+#include "utils.h"
+#include "GameTimer.h"
 
 class ApplicationFramework
 {
@@ -28,18 +39,20 @@ public:
 
 protected:
     virtual void CreateRTVAndDSVDescriptorHeaps();
-    virtual void OnResize();
+    virtual void OnResize(GLFWwindow* window, int width, int height);
     virtual void update(GameTimer& timer) = 0;
     virtual void draw(GameTimer& timer) = 0;
 
-    // mouse events handler
-    
     bool InitMainWindow();
+
+    virtual void OnMouseButton(GLFWwindow* window, int button, int action, int mods);
+    virtual void OnMouseMove(GLFWwindow* window, double xpos, double ypos);
+    virtual void OnKeyButton(GLFWwindow* window, int key, int scancode, int action, int mods);
+    
     bool InitDirect3D();
 
     void CreateSwapChain();
     void CreateCommandObjects();
-
     void FlushCommandQueue();
 
     ID3D12Resource* GetCurrentBackBuffer() const;
@@ -65,6 +78,7 @@ protected:
 
     Microsoft::WRL::ComPtr<IDXGISwapChain> mSwapChain;
     Microsoft::WRL::ComPtr<ID3D12Resource> mSwapChainBuffer[SwapChainBufferSize];
+    Microsoft::WRL::ComPtr<ID3D12Resource> mDepthStencilBuffer;
 
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> mCommandQueue;
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> mCommandAllocator;
@@ -85,6 +99,11 @@ protected:
     DXGI_FORMAT mDepthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
     UINT mMainWindowWidth = 800;
     UINT mMainWindowHeight = 600;
+
+    std::array<bool, GLFW_KEY_LAST> mKeysState;
+    XMFLOAT2 mLastMousePos;
+
+    // camera object
 };
 
 #endif // APPLICATION_FRAMEWORK_H
