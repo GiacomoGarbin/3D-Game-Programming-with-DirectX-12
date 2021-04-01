@@ -2,7 +2,7 @@
 
 class ApplicationInstance : public ApplicationFramework
 {
-	virtual void OnResize() override;
+	virtual void OnResize(GLFWwindow* window, int width, int height) override;
 	virtual void update(GameTimer& timer) override;
 	virtual void draw(GameTimer& timer) override;
 
@@ -24,9 +24,9 @@ bool ApplicationInstance::init()
 	return ApplicationFramework::init();
 }
 
-void ApplicationInstance::OnResize()
+void ApplicationInstance::OnResize(GLFWwindow* window, int width, int height)
 {
-	ApplicationFramework::OnResize();
+	ApplicationFramework::OnResize(window, width, height);
 }
 
 void ApplicationInstance::update(GameTimer& timer)
@@ -38,7 +38,10 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	ThrowIfFailed(mCommandList->Reset(mCommandAllocator.Get(), nullptr));
 
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+	{
+		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
@@ -46,9 +49,14 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::Black, 0, nullptr);
 	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
 
-	mCommandList->OMSetRenderTargets(1, &GetCurrentBackBufferView(), true, &GetDepthStencilView());
+	auto rtv = GetCurrentBackBufferView();
+	auto dsv = GetDepthStencilView();
+	mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
 
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+	{
+		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
 
 	ThrowIfFailed(mCommandList->Close());
 
