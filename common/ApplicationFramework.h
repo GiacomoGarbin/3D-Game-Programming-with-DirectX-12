@@ -4,19 +4,19 @@
 // windows
 #include <wrl.h>
 
-// directx
-#include <d3d12.h>
-#include <dxgi.h>
-#include <DirectXColors.h>
-#include <d3d12sdklayers.h>
-#include "d3dx12.h"
-#include <DirectXMath.h>
-using namespace DirectX;
-
 // glfw
 #include <glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <glfw3native.h>
+
+// directx
+#include "d3dx12.h"
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
+#include <dxgi.h>
+#include <DirectXMath.h>
+#include <DirectXColors.h>
+using namespace DirectX;
 
 // std library
 #include <array>
@@ -59,7 +59,8 @@ protected:
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferView() const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetDepthStencilView() const;
 
-    Microsoft::WRL::ComPtr<GLFWwindow> mMainWindow = nullptr;
+    //Microsoft::WRL::ComPtr<GLFWwindow> mMainWindow = nullptr;
+    GLFWwindow* mMainWindow = nullptr;
     bool mApplicationPaused = false;
 
     bool m4xMSAAState = false;

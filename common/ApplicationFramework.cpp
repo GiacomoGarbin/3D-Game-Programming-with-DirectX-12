@@ -12,7 +12,7 @@ ApplicationFramework::~ApplicationFramework()
         FlushCommandQueue();
     }
 
-    glfwDestroyWindow(mMainWindow.Get());
+    glfwDestroyWindow(mMainWindow);
     glfwTerminate();
 }
 
@@ -28,7 +28,7 @@ bool ApplicationFramework::init()
         return false;
     }
 
-    OnResize(mMainWindow.Get(), mMainWindowWidth, mMainWindowHeight);
+    OnResize(mMainWindow, mMainWindowWidth, mMainWindowHeight);
 
     return true;
 }
@@ -45,29 +45,32 @@ bool ApplicationFramework::InitMainWindow()
 
     mMainWindow = glfwCreateWindow(mMainWindowWidth, mMainWindowHeight, mMainWindowTitle.c_str(), nullptr, nullptr);
 
-    if (!mMainWindow) return false;
+    if (!mMainWindow)
+    {
+        return false;
+    }
 
-    glfwSetWindowUserPointer(mMainWindow.Get(), this);
+    glfwSetWindowUserPointer(mMainWindow, this);
 
-    glfwSetWindowSizeCallback(mMainWindow.Get(), [](GLFWwindow* window, int width, int height)
+    glfwSetWindowSizeCallback(mMainWindow, [](GLFWwindow* window, int width, int height)
     {
         ApplicationFramework* app = reinterpret_cast<ApplicationFramework*>(glfwGetWindowUserPointer(window));
         app->OnResize(window, width, height);
     });
 
-    glfwSetMouseButtonCallback(mMainWindow.Get(), [](GLFWwindow* window, int button, int action, int mods)
+    glfwSetMouseButtonCallback(mMainWindow, [](GLFWwindow* window, int button, int action, int mods)
     {
         ApplicationFramework* app = reinterpret_cast<ApplicationFramework*>(glfwGetWindowUserPointer(window));
         app->OnMouseButton(window, button, action, mods);
     });
 
-    glfwSetCursorPosCallback(mMainWindow.Get(), [](GLFWwindow* window, double xpos, double ypos)
+    glfwSetCursorPosCallback(mMainWindow, [](GLFWwindow* window, double xpos, double ypos)
     {
         ApplicationFramework* app = reinterpret_cast<ApplicationFramework*>(glfwGetWindowUserPointer(window));
         app->OnMouseMove(window, xpos, ypos);
     });
 
-    glfwSetKeyCallback(mMainWindow.Get(), [](GLFWwindow* window, int key, int scancode, int action, int mods)
+    glfwSetKeyCallback(mMainWindow, [](GLFWwindow* window, int key, int scancode, int action, int mods)
     {
         ApplicationFramework* app = reinterpret_cast<ApplicationFramework*>(glfwGetWindowUserPointer(window));
         app->OnKeyButton(window, key, scancode, action, mods);
@@ -148,7 +151,7 @@ bool ApplicationFramework::InitDirect3D()
 
 void ApplicationFramework::CreateCommandObjects()
 {
-    D3D12_COMMAND_QUEUE_DESC desc;
+    D3D12_COMMAND_QUEUE_DESC desc = {};
     desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 
@@ -175,7 +178,7 @@ void ApplicationFramework::CreateSwapChain()
     desc.SampleDesc.Quality = m4xMSAAState ? (m4xMSAAQuality - 1) : 0;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = SwapChainBufferSize;
-    desc.OutputWindow = glfwGetWin32Window(mMainWindow.Get());
+    desc.OutputWindow = glfwGetWin32Window(mMainWindow);
     desc.Windowed = true;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     desc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
@@ -291,13 +294,13 @@ bool ApplicationFramework::run()
 {
     //mGameTimer.reset();
 
-    while (!glfwWindowShouldClose(mMainWindow.Get()))
+    while (!glfwWindowShouldClose(mMainWindow))
     {
         glfwPollEvents();
 
         //mGameTimer.tick();
 
-        if (mApplicationPaused)
+        if (!mApplicationPaused)
         {
             // frame stats
             update(mGameTimer);
