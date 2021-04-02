@@ -46,7 +46,7 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::Black, 0, nullptr);
+	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::Yellow, 0, nullptr);
 	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
 
 	auto rtv = GetCurrentBackBufferView();
