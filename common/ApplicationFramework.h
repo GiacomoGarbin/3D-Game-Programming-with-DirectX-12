@@ -4,16 +4,11 @@
 // windows
 #include <wrl.h>
 
-// glfw
-#include <glfw3.h>
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <glfw3native.h>
-
 // directx
 #include "d3dx12.h"
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
-#include <dxgi.h>
+#include <dxgi1_4.h>
 #include <DirectXMath.h>
 #include <DirectXColors.h>
 using namespace DirectX;
@@ -25,58 +20,79 @@ using namespace DirectX;
 #include "utils.h"
 #include "GameTimer.h"
 
+// debug
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+
 class ApplicationFramework
 {
-public:
-    ApplicationFramework();
+protected:
+    ApplicationFramework(HINSTANCE instance);
+    ApplicationFramework(const ApplicationFramework& rhs) = delete;
+    ApplicationFramework& operator=(const ApplicationFramework& rhs) = delete;
     virtual ~ApplicationFramework();
 
-    virtual bool init();
-    bool run();
+public:
+    static ApplicationFramework* GetApplicationFramework();
 
-    //SetMSAA()
-    //GetMSAA()
+    HINSTANCE GetApplicationInstance() const { return mApplicationInstance; }
+    HWND GetMainWindow() const { return mMainWindow; }
+    float GetAspectRatio() const { return static_cast<float>(mMainWindowWidth) / mMainWindowHeight; }
+
+    bool Get4xMSAAState() const { return m4xMSAAState; }
+    void Set4xMSAAState(bool value) { m4xMSAAState = value; }
+
+    int run();
+    
+    virtual bool init();
+    virtual LRESULT MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 protected:
     virtual void CreateRTVAndDSVDescriptorHeaps();
-    virtual void OnResize(GLFWwindow* window, int width, int height);
+    virtual void OnResize();
     virtual void update(GameTimer& timer) = 0;
     virtual void draw(GameTimer& timer) = 0;
 
+    virtual void OnMouseDown(WPARAM state, int x, int y);
+    virtual void OnMouseUp(WPARAM state, int x, int y);
+    virtual void OnMouseMove(WPARAM state, int x, int y);
+
     bool InitMainWindow();
-
-    virtual void OnMouseButton(GLFWwindow* window, int button, int action, int mods);
-    virtual void OnMouseMove(GLFWwindow* window, double xpos, double ypos);
-    virtual void OnKeyButton(GLFWwindow* window, int key, int scancode, int action, int mods);
-    
     bool InitDirect3D();
-
-    void CreateSwapChain();
     void CreateCommandObjects();
+    void CreateSwapChain();
     void FlushCommandQueue();
 
     ID3D12Resource* GetCurrentBackBuffer() const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferView() const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetDepthStencilView() const;
 
-    //Microsoft::WRL::ComPtr<GLFWwindow> mMainWindow = nullptr;
-    GLFWwindow* mMainWindow = nullptr;
+    void CalculateFrameStats();
+
+    static ApplicationFramework* mApplicationFramework;
+
+    HINSTANCE mApplicationInstance = nullptr;
+    HWND mMainWindow = nullptr;
+    
     bool mApplicationPaused = false;
+    bool mWindowMinimized = false;
+    bool mWindowMaximized = false;
+    bool mWindowResizing = false;
+    bool mFullscreenState = false;
 
     bool m4xMSAAState = false;
     UINT m4xMSAAQuality = 0;
 
     GameTimer mGameTimer;
 
-    Microsoft::WRL::ComPtr<IDXGIFactory> mFactory;
+    Microsoft::WRL::ComPtr<IDXGIFactory4> mFactory;
     Microsoft::WRL::ComPtr<ID3D12Device> mDevice;
     
-    Microsoft::WRL::ComPtr<ID3D12Fence> mFence;
     UINT64 mCurrentFence = 0;
-
-    static const INT SwapChainBufferSize = 2;
+    Microsoft::WRL::ComPtr<ID3D12Fence> mFence;
+    
     INT mCurrentBackBufferIndex = 0;
-
+    static const INT SwapChainBufferSize = 2;
     Microsoft::WRL::ComPtr<IDXGISwapChain> mSwapChain;
     Microsoft::WRL::ComPtr<ID3D12Resource> mSwapChainBuffer[SwapChainBufferSize];
     Microsoft::WRL::ComPtr<ID3D12Resource> mDepthStencilBuffer;
@@ -95,14 +111,11 @@ protected:
     UINT mDSVDescriptorSize = 0;
     UINT mCBVSRVUAVDescriptorSize = 0;
 
-    std::string mMainWindowTitle = "Application Framework";
+    std::wstring mMainWindowTitle = L"Application Framework";
     DXGI_FORMAT mBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     DXGI_FORMAT mDepthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
     UINT mMainWindowWidth = 800;
     UINT mMainWindowHeight = 600;
-
-    std::array<bool, GLFW_KEY_LAST> mKeysState;
-    XMFLOAT2 mLastMousePos;
 
     // camera object
 };

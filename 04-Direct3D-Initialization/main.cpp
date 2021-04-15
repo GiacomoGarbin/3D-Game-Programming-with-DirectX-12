@@ -2,18 +2,19 @@
 
 class ApplicationInstance : public ApplicationFramework
 {
-	virtual void OnResize(GLFWwindow* window, int width, int height) override;
+	virtual void OnResize() override;
 	virtual void update(GameTimer& timer) override;
 	virtual void draw(GameTimer& timer) override;
 
 public:
-	ApplicationInstance();
+	ApplicationInstance(HINSTANCE instance);
 	~ApplicationInstance();
 
 	virtual bool init() override;
 };
 
-ApplicationInstance::ApplicationInstance() : ApplicationFramework()
+ApplicationInstance::ApplicationInstance(HINSTANCE instance)
+	: ApplicationFramework(instance)
 {}
 
 ApplicationInstance::~ApplicationInstance()
@@ -24,9 +25,9 @@ bool ApplicationInstance::init()
 	return ApplicationFramework::init();
 }
 
-void ApplicationInstance::OnResize(GLFWwindow* window, int width, int height)
+void ApplicationInstance::OnResize()
 {
-	ApplicationFramework::OnResize(window, width, height);
+	ApplicationFramework::OnResize();
 }
 
 void ApplicationInstance::update(GameTimer& timer)
@@ -69,14 +70,24 @@ void ApplicationInstance::draw(GameTimer& timer)
 	FlushCommandQueue();
 }
 
-int main()
+int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, PSTR CMD, int ShowCMD)
 {
-	ApplicationInstance instance;
+	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-	if (!instance.init())
+	try
 	{
+		ApplicationInstance app(instance);
+
+		if (!app.init())
+		{
+			return 0;
+		}
+
+		return app.run();
+	}
+	catch (ApplicationFrameworkException& e)
+	{
+		MessageBox(nullptr, e.ToString().c_str(), L"HR Failed", MB_OK);
 		return 0;
 	}
-
-	return instance.run();
 }
