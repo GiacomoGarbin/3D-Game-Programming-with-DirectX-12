@@ -2,6 +2,8 @@
 
 class ApplicationInstance : public ApplicationFramework
 {
+	bool mShowDemoWindow = true;
+
 	virtual void OnResize() override;
 	virtual void update(GameTimer& timer) override;
 	virtual void draw(GameTimer& timer) override;
@@ -35,6 +37,14 @@ void ApplicationInstance::update(GameTimer& timer)
 
 void ApplicationInstance::draw(GameTimer& timer)
 {
+	ImGui_ImplDX12_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::ShowDemoWindow(&mShowDemoWindow);
+
+	ImGui::Render();
+
 	ThrowIfFailed(mCommandAllocator->Reset());
 
 	ThrowIfFailed(mCommandList->Reset(mCommandAllocator.Get(), nullptr));
@@ -53,6 +63,10 @@ void ApplicationInstance::draw(GameTimer& timer)
 	auto rtv = GetCurrentBackBufferView();
 	auto dsv = GetDepthStencilView();
 	mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
+
+	ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
 	{
 		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);

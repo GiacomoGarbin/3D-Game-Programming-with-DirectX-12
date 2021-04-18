@@ -5,7 +5,7 @@
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	// Forward hwnd on because we can get messages (e.g., WM_CREATE)
+	// forward hwnd on because we can get messages (e.g., WM_CREATE)
 	// before CreateWindow returns, and thus before mMainWindow is valid
 	return ApplicationFramework::GetApplicationFramework()->MsgProc(hwnd, msg, wParam, lParam);
 }
@@ -174,11 +174,23 @@ void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
 
 		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mDSVHeap.GetAddressOf())));
 	}
+
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC desc;
+		desc.NumDescriptors = 1;
+		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		desc.NodeMask = 0;
+
+		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mSRVHeap.GetAddressOf())));
+	}
 }
 
 void ApplicationFramework::OnResize()
 {
 	FlushCommandQueue();
+
+	ImGui_ImplDX12_InvalidateDeviceObjects();
 
 	ThrowIfFailed(mCommandList->Reset(mCommandAllocator.Get(), nullptr));
 
@@ -255,10 +267,19 @@ void ApplicationFramework::OnResize()
 	mScissorRect.top = 0;
 	mScissorRect.right = mMainWindowWidth;
 	mScissorRect.bottom = mMainWindowHeight;
+
+	ImGui_ImplDX12_CreateDeviceObjects();
 }
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 LRESULT ApplicationFramework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (ImGui_ImplWin32_WndProcHandler(mMainWindow, msg, wParam, lParam))
+	{
+		return true;
+	}
+
 	switch (msg)
 	{
 		// WM_ACTIVATE is sent when the window is activated or deactivated  
@@ -420,6 +441,23 @@ int ApplicationFramework::run()
 
 	mGameTimer.reset();
 
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+	ImGui::StyleColorsDark();
+	//ImGui::StyleColorsClassic();
+
+	ImGui_ImplWin32_Init(mMainWindow);
+	ImGui_ImplDX12_Init(mDevice.Get(),
+						SwapChainBufferSize,
+						mBackBufferFormat,
+						mSRVHeap.Get(),
+						mSRVHeap->GetCPUDescriptorHandleForHeapStart(),
+						mSRVHeap->GetGPUDescriptorHandleForHeapStart());
+
 	while (msg.message != WM_QUIT)
 	{
 		if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
@@ -443,6 +481,10 @@ int ApplicationFramework::run()
 			}
 		}
 	}
+
+	ImGui_ImplDX12_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
 
 	return msg.wParam;
 }

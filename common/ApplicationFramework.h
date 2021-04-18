@@ -4,6 +4,11 @@
 // windows
 #include <wrl.h>
 
+// imgui
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx12.h"
+
 // directx
 #include "d3dx12.h"
 #include <d3d12.h>
@@ -106,6 +111,8 @@ protected:
 
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mRTVHeap;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mDSVHeap;
+
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mSRVHeap;
 
     UINT mRTVDescriptorSize = 0;
     UINT mDSVDescriptorSize = 0;
