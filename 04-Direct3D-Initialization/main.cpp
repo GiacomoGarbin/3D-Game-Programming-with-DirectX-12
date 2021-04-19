@@ -3,6 +3,8 @@
 class ApplicationInstance : public ApplicationFramework
 {
 	bool mShowDemoWindow = true;
+	XMFLOAT4 mRenderTargetClearColor = { 1, 1, 0, 1 };
+	//XMVECTORF32 mRenderTargetClearColor = DirectX::Colors::Yellow;
 
 	virtual void OnResize() override;
 	virtual void update(GameTimer& timer) override;
@@ -41,7 +43,13 @@ void ApplicationInstance::draw(GameTimer& timer)
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 
-	ImGui::ShowDemoWindow(&mShowDemoWindow);
+	//ImGui::ShowDemoWindow(&mShowDemoWindow);
+
+	{
+		ImGui::Begin("clear render target color");
+		ImGui::ColorEdit3("clear render target color", &mRenderTargetClearColor.x, 0);
+		ImGui::End();
+	}
 
 	ImGui::Render();
 
@@ -57,7 +65,7 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::Yellow, 0, nullptr);
+	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), &mRenderTargetClearColor.x, 0, nullptr);
 	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
 
 	auto rtv = GetCurrentBackBufferView();
