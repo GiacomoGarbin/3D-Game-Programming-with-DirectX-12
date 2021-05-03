@@ -1,33 +1,10 @@
 #ifndef APPLICATION_FRAMEWORK_H
 #define APPLICATION_FRAMEWORK_H
 
-// windows
-#include <wrl.h>
-
-// imgui
-#include "imgui.h"
-#include "imgui_impl_win32.h"
-#include "imgui_impl_dx12.h"
-
-// directx
-#include "d3dx12.h"
-#include <d3d12.h>
-#include <d3d12sdklayers.h>
-#include <dxgi1_4.h>
-#include <DirectXMath.h>
-#include <DirectXColors.h>
-using namespace DirectX;
-
-// std library
-#include <array>
-
 // common
 #include "utils.h"
 #include "GameTimer.h"
-
-// debug
-#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
+#include "MathHelper.h"
 
 class ApplicationFramework
 {
@@ -42,7 +19,7 @@ public:
 
     HINSTANCE GetApplicationInstance() const { return mApplicationInstance; }
     HWND GetMainWindow() const { return mMainWindow; }
-    float GetAspectRatio() const { return static_cast<float>(mMainWindowWidth) / mMainWindowHeight; }
+    float GetAspectRatio() const { return static_cast<float>(mMainWindowWidth) / static_cast<float>(mMainWindowHeight); }
 
     bool Get4xMSAAState() const { return m4xMSAAState; }
     void Set4xMSAAState(bool value) { m4xMSAAState = value; }
