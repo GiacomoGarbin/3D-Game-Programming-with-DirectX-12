@@ -45,6 +45,9 @@
     <ClCompile Include="..\..\imgui\backends\imgui_impl_win32.cpp">
       <Filter>common</Filter>
     </ClCompile>
+    <ClCompile Include="..\common\MathHelper.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\common\ApplicationFramework.h">
@@ -69,6 +72,9 @@
       <Filter>common</Filter>
     </ClInclude>
     <ClInclude Include="..\..\imgui\backends\imgui_impl_win32.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\MathHelper.h">
       <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>
