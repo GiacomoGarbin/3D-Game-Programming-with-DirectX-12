@@ -11,6 +11,9 @@ public:
 	void start();
 	void stop();
 	void tick();
+
+	float GetDeltaTime();
+	float GetTotalTime();
 };
 
 #endif // GAME_TIMER_H
