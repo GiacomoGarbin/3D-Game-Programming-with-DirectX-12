@@ -74,7 +74,7 @@ class Utils
 public:
     static UINT GetConstantBufferByteSize(UINT size)
     {
-        return (size * 255) & ~255;
+        return (size + 255) & ~255;
     }
 
     static Microsoft::WRL::ComPtr<ID3DBlob> CompileShader(const std::wstring& filename,
@@ -166,7 +166,7 @@ struct SubMeshGeometry
 {
     UINT IndexCount = 0;
     UINT StartIndexLocation = 0;
-    INT BaseIndexVertexLocation = 0;
+    INT BaseVertexLocation = 0;
 
     DirectX::BoundingBox BoundingBox;
 };
