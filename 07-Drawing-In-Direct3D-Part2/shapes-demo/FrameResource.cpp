@@ -1,0 +1,12 @@
+#include "FrameResource.h"
+
+FrameResource::FrameResource(ID3D12Device* device, UINT PassCount, UINT ObjectCount)
+{
+	ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(CommandAllocator.GetAddressOf())));
+
+	MainPassCB = std::make_unique<UploadBuffer<MainPassConstants>>(device, PassCount, true);
+	ObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(device, ObjectCount, true);
+}
+
+FrameResource::~FrameResource()
+{}

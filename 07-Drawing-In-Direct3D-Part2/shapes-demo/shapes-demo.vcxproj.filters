@@ -48,6 +48,12 @@
     <ClCompile Include="..\..\..\imgui\imgui_widgets.cpp">
       <Filter>common</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\common\GeometryGenerator.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="FrameResource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\common\ApplicationFramework.h">
@@ -75,6 +81,12 @@
       <Filter>common</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\imgui\imgui_internal.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="FrameResource.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\common\GeometryGenerator.h">
       <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>
