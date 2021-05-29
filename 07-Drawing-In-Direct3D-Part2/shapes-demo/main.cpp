@@ -34,7 +34,6 @@ class ApplicationInstance : public ApplicationFramework
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mCBVHeap = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mSRVHeap = nullptr;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mMeshGeometries;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
@@ -164,17 +163,17 @@ void ApplicationInstance::update(GameTimer& timer)
 
 void ApplicationInstance::draw(GameTimer& timer)
 {
-	//ImGui_ImplDX12_NewFrame();
-	//ImGui_ImplWin32_NewFrame();
-	//ImGui::NewFrame();
+	ImGui_ImplDX12_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
 
-	//{
-	//	ImGui::Begin("clear render target color");
-	//	ImGui::ColorEdit3("clear render target color", &mRenderTargetClearColor.x, 0);
-	//	ImGui::End();
-	//}
+	{
+		ImGui::Begin("clear render target color");
+		ImGui::ColorEdit3("clear render target color", &mRenderTargetClearColor.x, 0);
+		ImGui::End();
+	}
 
-	//ImGui::Render();
+	ImGui::Render();
 
 	auto CommandAllocator = mCurrentFrameResource->CommandAllocator;
 
@@ -209,12 +208,6 @@ void ApplicationInstance::draw(GameTimer& timer)
 	ID3D12DescriptorHeap* heaps[] = { mCBVHeap.Get() };
 	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-	//{
-	//	ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
-	//	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
-	//	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-	//}
-
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
 	int MainPassCBVIndex = mMainPassCBVOffset + mCurrentFrameResourceIndex;
@@ -223,6 +216,13 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->SetGraphicsRootDescriptorTable(1, MainPassCBVHandle);
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRenderItems);
+
+	{
+		ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+	}
 
 	{
 		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
