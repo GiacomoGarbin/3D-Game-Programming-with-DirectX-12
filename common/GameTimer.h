@@ -3,6 +3,17 @@
 
 class GameTimer
 {
+	double mSecondsPerCount;
+	double mDeltaTime;
+
+	__int64 mBaseTime;
+	__int64 mPauseTime;
+	__int64 mStopTime;
+	__int64 mPrevTime;
+	__int64 mCurrTime;
+
+	bool mStopped;
+
 public:
     GameTimer();
     ~GameTimer();
@@ -12,8 +23,8 @@ public:
 	void stop();
 	void tick();
 
-	float GetDeltaTime();
-	float GetTotalTime();
+	float GetDeltaTime() const;
+	float GetTotalTime() const;
 };
 
 #endif // GAME_TIMER_H
