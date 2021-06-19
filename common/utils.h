@@ -29,6 +29,8 @@ using namespace DirectX;
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
 
+extern const int gFrameResourcesCount;
+
 inline std::wstring AnsiToWString(const std::string& str)
 {
     WCHAR buffer[512];
@@ -174,6 +176,43 @@ public:
     {
         std::memcpy(&mMappedData[index * mElementByteSize], &data, sizeof(T));
     }
+};
+
+struct Material
+{
+    std::string name;
+
+    int ConstantBufferIndex = -1;
+
+    int DiffuseSRVHeapIndex = -1;
+    int NormalSRVHeapIndex = -1;
+
+    int DirtyFramesCount = gFrameResourcesCount;
+
+    XMFLOAT4 DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+    XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
+    float roughness = 0.25f;
+
+    //XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
+};
+
+struct MaterialConstants
+{
+    XMFLOAT4 DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+    XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
+    float roughness = 0.25f;
+
+    //XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
+};
+
+struct Light
+{
+    XMFLOAT3 strength = XMFLOAT3(0.5f, 0.5f, 0.5f);
+    float FalloffStart = 1.0f;
+    XMFLOAT3 direction = XMFLOAT3(0.0f, -1.0f, 0.0f);
+    float FalloffEnd = 10.0f;
+    XMFLOAT3 position = XMFLOAT3(0.0f, 0.0f, 0.0f);
+    float SpotPower = 64.0f;
 };
 
 #endif // UTILS_H
