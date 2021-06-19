@@ -16,6 +16,7 @@ struct RenderItem
 	UINT ConstantBufferIndex = -1;
 
 	MeshGeometry* geometry = nullptr;
+	Material* material = nullptr;
 
 	D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
@@ -44,6 +45,7 @@ class ApplicationInstance : public ApplicationFramework
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mMeshGeometries;
+	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
@@ -70,8 +72,8 @@ class ApplicationInstance : public ApplicationFramework
 	float mCameraPhi = XM_PIDIV2 - 0.1f;
 	float mCameraRadius = 50.0f;
 
-	//float mLightTheta = 1.25f * XM_PI;
-	//float mLightPhi = XM_PIDIV4;
+	float mLightTheta = 1.25f * XM_PI;
+	float mLightPhi = XM_PIDIV4;
 
 	POINT mLastMousePosition;
 
@@ -86,6 +88,7 @@ class ApplicationInstance : public ApplicationFramework
 
 	void UpdateCamera(const GameTimer& timer);
 	void UpdateObjectCBs(const GameTimer& timer);
+	void UpdateMaterialCBs(const GameTimer& timer);
 	void UpdateMainPassCB(const GameTimer& timer);
 	void UpdateWaves(const GameTimer& timer);
 
@@ -95,12 +98,13 @@ class ApplicationInstance : public ApplicationFramework
 	void BuildMeshGeometry(); // land and waves geometry
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
+	void BuildMaterials();
 	void BuildRenderItems();
 
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems);
 
 	float GetHillHeight(float x, float z) const;
-	//XMFLOAT3 GetHillNormal(float x, float z) const;
+	XMFLOAT3 GetHillNormal(float x, float z) const;
 
 public:
 	ApplicationInstance(HINSTANCE instance);
@@ -130,11 +134,14 @@ bool ApplicationInstance::init()
 
 	ThrowIfFailed(mCommandList->Reset(mCommandAllocator.Get(), nullptr));
 
+	mCBVSRVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
 	mWaves = std::make_unique<Waves>(128, 128, 0.03f, 1.0f, 4.0f, 0.2f);
 
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
 	BuildMeshGeometry();
+	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
 	BuildPipelineStateObjects();
@@ -174,22 +181,23 @@ void ApplicationInstance::update(GameTimer& timer)
 	}
 
 	UpdateObjectCBs(timer);
+	UpdateMaterialCBs(timer);
 	UpdateMainPassCB(timer);
 	UpdateWaves(timer);
 }
 
 void ApplicationInstance::draw(GameTimer& timer)
 {
-	ImGui_ImplDX12_NewFrame();
-	ImGui_ImplWin32_NewFrame();
-	ImGui::NewFrame();
+	//ImGui_ImplDX12_NewFrame();
+	//ImGui_ImplWin32_NewFrame();
+	//ImGui::NewFrame();
 
-	{
-		ImGui::Begin("clear render target color");
-		ImGui::End();
-	}
+	//{
+	//	ImGui::Begin("clear render target color");
+	//	ImGui::End();
+	//}
 
-	ImGui::Render();
+	//ImGui::Render();
 
 	auto CommandAllocator = mCurrentFrameResource->CommandAllocator;
 
@@ -224,16 +232,16 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
 	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
-	mCommandList->SetGraphicsRootConstantBufferView(1, MainPassCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(2, MainPassCB->GetGPUVirtualAddress());
 
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
 
-	{
-		ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
-		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	//{
+	//	ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
+	//	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-	}
+	//	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+	//}
 
 	{
 		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -301,6 +309,28 @@ void ApplicationInstance::OnMouseMove(WPARAM state, int x, int y)
 void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 {
 	mIsWireFrameEnabled = (GetAsyncKeyState('1') & 0x8000);
+
+	float dt = timer.GetDeltaTime();
+
+	if (GetAsyncKeyState(VK_LEFT) & 0x8000)
+	{
+		mLightTheta -= dt;
+	}
+
+	if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
+	{
+		mLightTheta += dt;
+	}
+
+	if (GetAsyncKeyState(VK_UP) & 0x8000)
+	{
+		mLightPhi -= dt;
+	}
+
+	if (GetAsyncKeyState(VK_DOWN) & 0x8000)
+	{
+		mLightPhi += dt;
+	}
 }
 
 void ApplicationInstance::UpdateCamera(const GameTimer& timer)
@@ -337,6 +367,26 @@ void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
 	}
 }
 
+void ApplicationInstance::UpdateMaterialCBs(const GameTimer& timer)
+{
+	auto CurrentMaterialCB = mCurrentFrameResource->MaterialCB.get();
+
+	for (auto& [key, material] : mMaterials)
+	{
+		if (material->DirtyFramesCount > 0)
+		{
+			MaterialConstants buffer;
+			buffer.DiffuseAlbedo = material->DiffuseAlbedo;
+			buffer.FresnelR0 = material->FresnelR0;
+			buffer.roughness = material->roughness;
+
+			CurrentMaterialCB->CopyData(material->ConstantBufferIndex, buffer);
+
+			(material->DirtyFramesCount)--;
+		}
+	}
+}
+
 void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 {
 	XMVECTOR determinant;
@@ -365,6 +415,12 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	mMainPassCB.DeltaTime = timer.GetDeltaTime();
 	mMainPassCB.TotalTime = timer.GetTotalTime();
 
+	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f};
+
+	XMVECTOR LightDir = -MathHelper::SphericalToCartesian(1.0f, mLightTheta, mLightPhi);
+	XMStoreFloat3(&mMainPassCB.lights[0].direction, LightDir);
+	mMainPassCB.lights[0].strength = { 1.0f, 1.0f, 0.9f };
+
 	auto CurrentMainPassCB = mCurrentFrameResource->MainPassCB.get();
 	CurrentMainPassCB->CopyData(0, mMainPassCB);
 }
@@ -389,22 +445,14 @@ void ApplicationInstance::UpdateWaves(const GameTimer& timer)
 
 	auto WavesVB = mCurrentFrameResource->WavesVB.get();
 
-	static float y = 0;
-
 	for (int i = 0; i < mWaves->VertexCount(); ++i)
 	{
 		Vertex vertex;
 
 		vertex.position = mWaves->GetPosition(i);
-		vertex.color = XMFLOAT4(DirectX::Colors::Blue);
+		vertex.normal = mWaves->GetNormal(i);
 
 		WavesVB->CopyData(i, vertex);
-
-
-		if (mWaves->GetPosition(i).y > y)
-		{
-			y = mWaves->GetPosition(i).y;
-		}
 	}
 
 	mWavesRenderItem->geometry->VertexBufferGPU = WavesVB->GetResource();
@@ -412,12 +460,13 @@ void ApplicationInstance::UpdateWaves(const GameTimer& timer)
 
 void ApplicationInstance::BuildRootSignature()
 {
-	CD3DX12_ROOT_PARAMETER params[2];
+	CD3DX12_ROOT_PARAMETER params[3];
 
 	params[0].InitAsConstantBufferView(0);
 	params[1].InitAsConstantBufferView(1);
+	params[2].InitAsConstantBufferView(2);
 
-	CD3DX12_ROOT_SIGNATURE_DESC desc(2,
+	CD3DX12_ROOT_SIGNATURE_DESC desc(3,
 									 params,
 									 0,
 									 nullptr,
@@ -446,13 +495,13 @@ void ApplicationInstance::BuildRootSignature()
 
 void ApplicationInstance::BuildShadersAndInputLayout()
 {
-	mShaders["VS"] = Utils::CompileShader(L"shaders\\color.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["PS"] = Utils::CompileShader(L"shaders\\color.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["VS"] = Utils::CompileShader(L"shaders\\default.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["PS"] = Utils::CompileShader(L"shaders\\default.hlsl", nullptr, "PS", "ps_5_0");
 
 	mInputLayout =
 	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 	};
 }
 
@@ -473,27 +522,7 @@ void ApplicationInstance::BuildMeshGeometry()
 
 			vertex.position = grid.vertices[i].position;
 			vertex.position.y = GetHillHeight(vertex.position.x, vertex.position.z);
-
-			if (vertex.position.y < -10.0f)
-			{
-				vertex.color = XMFLOAT4(1.0f, 0.96f, 0.62f, 1.0f);
-			}
-			else if (vertex.position.y < 5.0f)
-			{
-				vertex.color = XMFLOAT4(0.48f, 0.77f, 0.46f, 1.0f);
-			}
-			else if (vertex.position.y < 12.0f)
-			{
-				vertex.color = XMFLOAT4(0.1f, 0.48f, 0.19f, 1.0f);
-			}
-			else if (vertex.position.y < 20.0f)
-			{
-				vertex.color = XMFLOAT4(0.45f, 0.39f, 0.34f, 1.0f);
-			}
-			else
-			{
-				vertex.color = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-			}
+			vertex.normal = GetHillNormal(vertex.position.x, vertex.position.z);
 		}
 
 		UINT VertexBufferByteSize = vertices.size() * sizeof(Vertex);
@@ -622,7 +651,36 @@ void ApplicationInstance::BuildFrameResources()
 {
 	for (int i = 0; i < gFrameResourcesCount; ++i)
 	{
-		mFrameResources.push_back(std::make_unique<FrameResource>(mDevice.Get(), 1, mRenderItems.size(), mWaves->VertexCount()));
+		mFrameResources.push_back(std::make_unique<FrameResource>(mDevice.Get(), 1, mMaterials.size(), mRenderItems.size(), mWaves->VertexCount()));
+	}
+}
+
+void ApplicationInstance::BuildMaterials()
+{
+	UINT ConstantBufferIndex = 0;
+
+	// grass
+	{
+		auto material = std::make_unique<Material>();
+		material->name = "grass";
+		material->ConstantBufferIndex = ConstantBufferIndex++;
+		material->DiffuseAlbedo = XMFLOAT4(0.2f, 0.6f, 0.2f, 1.0f);
+		material->FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
+		material->roughness = 0.125f;
+
+		mMaterials[material->name] = std::move(material);
+	}
+
+	// water
+	{
+		auto material = std::make_unique<Material>();
+		material->name = "water";
+		material->ConstantBufferIndex = ConstantBufferIndex++;
+		material->DiffuseAlbedo = XMFLOAT4(0.0f, 0.2f, 0.6f, 1.0f);
+		material->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+		material->roughness = 0.0f;
+
+		mMaterials[material->name] = std::move(material);
 	}
 }
 
@@ -637,6 +695,7 @@ void ApplicationInstance::BuildRenderItems()
 		item->world = MathHelper::Identity4x4();
 		item->ConstantBufferIndex = ObjectCBIndex++;
 		item->geometry = mMeshGeometries["water"].get();
+		item->material = mMaterials["water"].get();
 		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		item->IndexCount = item->geometry->DrawArgs["grid"].IndexCount;
 		item->StartIndexLocation = item->geometry->DrawArgs["grid"].StartIndexLocation;
@@ -656,6 +715,7 @@ void ApplicationInstance::BuildRenderItems()
 		item->world = MathHelper::Identity4x4();
 		item->ConstantBufferIndex = ObjectCBIndex++;
 		item->geometry = mMeshGeometries["land"].get();
+		item->material = mMaterials["grass"].get();
 		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		item->IndexCount = item->geometry->DrawArgs["grid"].IndexCount;
 		item->StartIndexLocation = item->geometry->DrawArgs["grid"].StartIndexLocation;
@@ -672,18 +732,26 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 	UINT ObjectCBByteSize = Utils::GetConstantBufferByteSize(sizeof(ObjectConstants));
 	auto ObjectCB = mCurrentFrameResource->ObjectCB->GetResource();
 
+	UINT MaterialCBByteSize = Utils::GetConstantBufferByteSize(sizeof(MaterialConstants));
+	auto MaterialCB = mCurrentFrameResource->MaterialCB->GetResource();
+
 	for (const auto& item : RenderItems)
 	{
 		D3D12_VERTEX_BUFFER_VIEW VertexBufferView = item->geometry->GetVertexBufferView();
 		CommandList->IASetVertexBuffers(0, 1, &VertexBufferView);
 		D3D12_INDEX_BUFFER_VIEW IndexBufferView = item->geometry->GetIndexBufferView();
 		CommandList->IASetIndexBuffer(&IndexBufferView);
+
 		CommandList->IASetPrimitiveTopology(item->PrimitiveTopology);
 
 		D3D12_GPU_VIRTUAL_ADDRESS ObjectCBAddress = ObjectCB->GetGPUVirtualAddress();
 		ObjectCBAddress += item->ConstantBufferIndex * ObjectCBByteSize;
+
+		D3D12_GPU_VIRTUAL_ADDRESS MaterialCBAddress = MaterialCB->GetGPUVirtualAddress();
+		MaterialCBAddress += item->material->ConstantBufferIndex * MaterialCBByteSize;
 		
 		CommandList->SetGraphicsRootConstantBufferView(0, ObjectCBAddress);
+		CommandList->SetGraphicsRootConstantBufferView(1, MaterialCBAddress);
 
 		CommandList->DrawIndexedInstanced(item->IndexCount, 1, item->StartIndexLocation, item->BaseVertexLocation, 0);
 	}
@@ -692,6 +760,17 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 float ApplicationInstance::GetHillHeight(float x, float z) const
 {
 	return 0.3f * (z * std::sin(0.1f * x) + x * std::cos(0.1f * z));
+}
+
+XMFLOAT3 ApplicationInstance::GetHillNormal(float x, float z) const
+{
+	// n = (-df/dx, 1, -df/dz)
+	XMFLOAT3 n = XMFLOAT3(-0.03f * z * std::cos(0.1f * x) - 0.3f * std::cos(0.1f * z),
+						  1.0f,
+						  -0.3f * std::sin(0.1f * x) + 0.03f * x * std::sin(0.1f * z));
+
+	XMStoreFloat3(&n, XMVector3Normalize(XMLoadFloat3(&n)));
+	return n;
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, PSTR CMD, int ShowCMD)

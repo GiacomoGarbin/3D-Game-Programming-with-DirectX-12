@@ -161,6 +161,7 @@
     <ClCompile Include="..\common\GameTimer.cpp" />
     <ClCompile Include="..\common\GeometryGenerator.cpp" />
     <ClCompile Include="..\common\MathHelper.cpp" />
+    <ClCompile Include="..\common\utils.cpp" />
     <ClCompile Include="FrameResource.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="waves.cpp" />

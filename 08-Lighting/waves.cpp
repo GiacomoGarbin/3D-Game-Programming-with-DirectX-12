@@ -17,6 +17,8 @@ Waves::Waves(int rows, int cols, float dt, float dx, float speed, float damping)
 	mPrevData.resize(mVertexCount);
 	mCurrData.resize(mVertexCount);
 
+	mNormals.resize(mVertexCount);
+
 	float HalfWidth = (cols - 1) * dx * 0.5f;
 	float HalfDepth = (rows - 1) * dx * 0.5f;
 
@@ -30,6 +32,8 @@ Waves::Waves(int rows, int cols, float dt, float dx, float speed, float damping)
 
 			mPrevData[i * cols + j] = XMFLOAT3(x, 0.0f, z);
 			mCurrData[i * cols + j] = XMFLOAT3(x, 0.0f, z);
+
+			mNormals[i * cols + j] = XMFLOAT3(0.0f, 1.0f, 0.0f);
 		}
 	}
 }
@@ -72,6 +76,11 @@ const XMFLOAT3& Waves::GetPosition(int i) const
 	return mCurrData[i];
 }
 
+const XMFLOAT3& Waves::GetNormal(int i) const
+{
+	return mNormals[i];
+}
+
 void Waves::update(float dt)
 {
 	static float t = 0;
@@ -99,6 +108,24 @@ void Waves::update(float dt)
 		t = 0.0f;
 
 		// compute normals and tangents
+		for (int i = 1; i < mRowCount - 1; ++i)
+		{
+			for (int j = 1; j < mColCount - 1; ++j)
+			{
+				float l = mCurrData[(i + 0) * mColCount + (j - 1)].y;
+				float r = mCurrData[(i + 0) * mColCount + (j + 1)].y;
+				float t = mCurrData[(i - 1) * mColCount + (j + 0)].y;
+				float b = mCurrData[(i + 1) * mColCount + (j + 0)].y;
+				
+				mNormals[i * mColCount + j].x = l - r;
+				mNormals[i * mColCount + j].y = 2.0f * mSpaceStep;
+				mNormals[i * mColCount + j].z = b - t;
+
+				XMStoreFloat3(&mNormals[i * mColCount + j], XMVector3Normalize(XMLoadFloat3(&mNormals[i * mColCount + j])));
+
+				// compute tangent
+			}
+		}
 	}
 }
 

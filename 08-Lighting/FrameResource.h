@@ -3,10 +3,12 @@
 #include "utils.h"
 #include "MathHelper.h"
 
+#define LIGHT_MAX_COUNT 16
+
 struct Vertex
 {
 	XMFLOAT3 position;
-	XMFLOAT4 color;
+	XMFLOAT3 normal;
 };
 
 struct ObjectConstants
@@ -30,16 +32,21 @@ struct MainPassConstants
 	float FarPlane = 0;
 	float DeltaTime = 0;
 	float TotalTime = 0;
+
+	XMFLOAT4 AmbientLight = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
+
+	Light lights[LIGHT_MAX_COUNT];
 };
 
 struct FrameResource
 {
-	FrameResource(ID3D12Device* device, UINT PassCount, UINT ObjectCount, UINT WaveVertexCount);
+	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT MaterialCount, UINT ObjectCount, UINT WaveVertexCount);
 	~FrameResource();
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;
 
 	std::unique_ptr<UploadBuffer<MainPassConstants>> MainPassCB = nullptr;
+	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	std::unique_ptr<UploadBuffer<Vertex>> WavesVB = nullptr;

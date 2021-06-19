@@ -22,6 +22,8 @@ class Waves
 
 	std::vector<XMFLOAT3> mPrevData;
 	std::vector<XMFLOAT3> mCurrData;
+	
+	std::vector<XMFLOAT3> mNormals;
 
 public:
 	Waves(int rows, int cols, float dt, float dx, float speed, float damping);
@@ -35,6 +37,7 @@ public:
 	float GetDepth() const;
 
 	const XMFLOAT3& GetPosition(int i) const;
+	const XMFLOAT3& GetNormal(int i) const;
 
 	void update(float dt);
 	void disturb(int i, int j, float magnitude);

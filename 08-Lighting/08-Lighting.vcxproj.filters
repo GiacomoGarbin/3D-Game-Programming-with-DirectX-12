@@ -16,6 +16,9 @@
     <Filter Include="common">
       <UniqueIdentifier>{8374d8a9-1620-4d24-96d5-8b9ab8a8820d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="imgui">
+      <UniqueIdentifier>{925102ee-092a-4d9f-a1eb-9d9a914b9647}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FrameResource.cpp">
@@ -39,23 +42,26 @@
     <ClCompile Include="..\common\MathHelper.cpp">
       <Filter>common</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\imgui\imgui.cpp">
-      <Filter>common</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\imgui\imgui_draw.cpp">
-      <Filter>common</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\imgui\imgui_tables.cpp">
+    <ClCompile Include="..\common\utils.cpp">
       <Filter>common</Filter>
     </ClCompile>
     <ClCompile Include="..\..\imgui\imgui_widgets.cpp">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\imgui\imgui.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\imgui\imgui_draw.cpp">
+      <Filter>imgui</Filter>
     </ClCompile>
     <ClCompile Include="..\..\imgui\backends\imgui_impl_dx12.cpp">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
     </ClCompile>
     <ClCompile Include="..\..\imgui\backends\imgui_impl_win32.cpp">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\imgui\imgui_tables.cpp">
+      <Filter>imgui</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -66,9 +72,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\common\ApplicationFramework.h">
-      <Filter>common</Filter>
-    </ClInclude>
-    <ClInclude Include="..\common\d3dx12.h">
       <Filter>common</Filter>
     </ClInclude>
     <ClInclude Include="..\common\GameTimer.h">
@@ -84,16 +87,19 @@
       <Filter>common</Filter>
     </ClInclude>
     <ClInclude Include="..\..\imgui\imgui.h">
-      <Filter>common</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\imgui\imgui_internal.h">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="..\..\imgui\backends\imgui_impl_dx12.h">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="..\..\imgui\backends\imgui_impl_win32.h">
-      <Filter>common</Filter>
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\imgui\imgui_internal.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\d3dx12.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
