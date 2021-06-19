@@ -16,6 +16,8 @@ public:
 	static float RandFloat(); // random float in [0, 1)
 	static float RandFloat(float a, float b); // random float in [a, b)
 	static int RandInt(int a, int b); // random int in [a, b]
+
+	static XMVECTOR SphericalToCartesian(float radius, float theta, float phi);
 };
 
 #endif // MATH_HELPER_H

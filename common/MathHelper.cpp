@@ -29,3 +29,12 @@ int MathHelper::RandInt(int a, int b)
 {
     return a + rand() % ((b - a) + 1);
 }
+
+
+XMVECTOR MathHelper::SphericalToCartesian(float radius, float theta, float phi)
+{
+	return XMVectorSet(radius * std::sin(phi) * std::cos(theta),
+                       radius * std::cos(phi),
+                       radius * std::sin(phi) * std::sin(theta),
+                       1.0f);
+}
