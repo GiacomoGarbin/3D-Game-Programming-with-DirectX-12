@@ -351,3 +351,6 @@ MigrationBackup/
 
 # Dear ImGui
 imgui.ini
+
+# executable files
+*.exe
