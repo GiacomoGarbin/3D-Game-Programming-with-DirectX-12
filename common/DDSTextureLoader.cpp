@@ -1290,7 +1290,7 @@ static HRESULT CreateD3DResources12(
 			const UINT num2DSubresources = texDesc.DepthOrArraySize * texDesc.MipLevels;
 			const UINT64 uploadBufferSize = GetRequiredIntermediateSize(texture.Get(), 0, num2DSubresources);
 
-            CD3DX12_HEAP_PROPERTIES HeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            CD3DX12_HEAP_PROPERTIES HeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
             CD3DX12_RESOURCE_DESC ResourceDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
 
 			hr = device->CreateCommittedResource(
