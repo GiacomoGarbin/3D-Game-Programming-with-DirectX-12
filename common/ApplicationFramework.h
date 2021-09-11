@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "GameTimer.h"
 #include "MathHelper.h"
+#include "DDSTextureLoader.h"
 
 class ApplicationFramework
 {
