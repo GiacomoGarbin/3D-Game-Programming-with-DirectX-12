@@ -29,6 +29,9 @@ using namespace DirectX;
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
 
+// common
+#include "MathHelper.h"
+
 extern const int gFrameResourcesCount;
 
 inline std::wstring AnsiToWString(const std::string& str)
@@ -193,7 +196,16 @@ struct Material
     XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
     float roughness = 0.25f;
 
-    //XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
+    XMFLOAT4X4 transform = MathHelper::Identity4x4();
+};
+
+struct Texture
+{
+    std::string name;
+    std::wstring filename;
+
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
 };
 
 struct MaterialConstants
@@ -202,7 +214,7 @@ struct MaterialConstants
     XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
     float roughness = 0.25f;
 
-    //XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
+    XMFLOAT4X4 transform = MathHelper::Identity4x4();
 };
 
 struct Light
