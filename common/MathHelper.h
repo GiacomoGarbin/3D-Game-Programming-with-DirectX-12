@@ -3,12 +3,20 @@
 
 #include <cmath>
 
-#include "utils.h"
+#include <DirectXMath.h>
+using namespace DirectX;
 
 class MathHelper
 {
 public:
-	static XMFLOAT4X4 Identity4x4();
+	static XMFLOAT4X4 Identity4x4()
+	{
+		static XMFLOAT4X4 I(1.0f, 0.0f, 0.0f, 0.0f,
+							0.0f, 1.0f, 0.0f, 0.0f,
+							0.0f, 0.0f, 1.0f, 0.0f,
+							0.0f, 0.0f, 0.0f, 1.0f);
+		return I;
+	}
 
 	template<typename T>
 	static T clamp(const T& x, const T& a, const T& b);
