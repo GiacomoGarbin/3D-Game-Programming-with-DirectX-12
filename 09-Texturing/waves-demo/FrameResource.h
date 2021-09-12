@@ -9,11 +9,13 @@ struct Vertex
 {
 	XMFLOAT3 position;
 	XMFLOAT3 normal;
+	XMFLOAT2 TexCoord;
 };
 
 struct ObjectConstants
 {
 	XMFLOAT4X4 world = MathHelper::Identity4x4();
+	XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
 };
 
 struct MainPassConstants
@@ -40,7 +42,7 @@ struct MainPassConstants
 
 struct FrameResource
 {
-	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT MaterialCount, UINT ObjectCount, UINT WaveVertexCount);
+	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT ObjectCount, UINT MaterialCount, UINT WaveVertexCount);
 	~FrameResource();
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;

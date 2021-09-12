@@ -1,6 +1,6 @@
 #include "FrameResource.h"
 
-FrameResource::FrameResource(ID3D12Device* device, UINT MainPassCount, UINT MaterialCount, UINT ObjectCount, UINT WaveVertexCount)
+FrameResource::FrameResource(ID3D12Device* device, UINT MainPassCount, UINT ObjectCount, UINT MaterialCount, UINT WaveVertexCount)
 {
 	ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(CommandAllocator.GetAddressOf())));
 
