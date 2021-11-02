@@ -26,7 +26,7 @@ cbuffer MainPassCB : register(b2)
 	float4x4 gViewProj;
 	float4x4 gViewProjInverse;
 	float3 gEyePositionW;
-	float padding;
+	float padding1;
 	float2 gRenderTargetSize;
 	float2 gRenderTargetSizeInverse;
 	float gNearPlane;
@@ -35,6 +35,12 @@ cbuffer MainPassCB : register(b2)
 	float gTotalTime;
 
 	float4 gAmbientLight;
+
+	float4 gFogColor;
+	float gFogStart;
+	float gFogRange;
+	float2 padding2;
+
 	Light gLights[LIGHT_MAX_COUNT];
 };
 
@@ -79,7 +85,9 @@ float4 PS(VertexOut pin) : SV_Target
 
 	pin.NormalW = normalize(pin.NormalW);
 
-	float3 ToEyeW = normalize(gEyePositionW - pin.PositionW);
+	float3 ToEyeW = gEyePositionW - pin.PositionW;
+	float DistToEye = length(ToEyeW);
+	ToEyeW /= DistToEye;
 
 	// indirect lighting
 	float4 ambient = gAmbientLight * DiffuseAlbedo;
@@ -91,6 +99,12 @@ float4 PS(VertexOut pin) : SV_Target
 	float4 direct = ComputeLighting(gLights, material, pin.PositionW, pin.NormalW, ToEyeW, ShadowFactor);
 	
 	float4 result = ambient + direct;
+
+#ifdef FOG
+	float FogAmount = saturate((DistToEye - gFogStart) / gFogRange);
+	result = lerp(result, gFogColor, FogAmount);
+#endif // FOG
+
 	result.a = DiffuseAlbedo.a;
 
 	return result;

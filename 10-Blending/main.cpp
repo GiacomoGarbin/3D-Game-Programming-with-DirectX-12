@@ -45,7 +45,7 @@ class ApplicationInstance : public ApplicationFramework
 
 	UINT mCBVSRVDescriptorSize = 0;
 
-	XMVECTORF32 mRenderTargetClearColor = DirectX::Colors::LightSteelBlue;
+	//XMVECTORF32 mRenderTargetClearColor = DirectX::Colors::LightSteelBlue;
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 
@@ -235,7 +235,7 @@ void ApplicationInstance::draw(GameTimer& timer)
 		mCommandList->ResourceBarrier(1, &transition);
 	}
 
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), mRenderTargetClearColor, 0, nullptr);
+	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), (float*)&mMainPassCB.FogColor, 0, nullptr);
 	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
 
 	{
