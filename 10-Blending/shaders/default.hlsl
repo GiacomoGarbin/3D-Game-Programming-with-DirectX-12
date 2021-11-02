@@ -73,6 +73,10 @@ float4 PS(VertexOut pin) : SV_Target
 {
 	float4 DiffuseAlbedo = gDiffuseTexture.Sample(gSamplerLinear, pin.TexCoord) * gDiffuseAlbedo;
 
+#if ALPHA_TEST
+	clip(DiffuseAlbedo.a - 0.1f);
+#endif // ALPHA_TEST
+
 	pin.NormalW = normalize(pin.NormalW);
 
 	float3 ToEyeW = normalize(gEyePositionW - pin.PositionW);

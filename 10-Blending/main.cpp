@@ -31,6 +31,8 @@ struct RenderItem
 enum class RenderLayer : int
 {
 	opaque = 0,
+	transparent,
+	AlphaTested,
 	
 	count
 };
@@ -254,6 +256,12 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
 
+	mCommandList->SetPipelineState(mPipelineStateObjects["alpha_tested"].Get());
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTested)]);
+
+	mCommandList->SetPipelineState(mPipelineStateObjects["transparent"].Get());
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::transparent)]);
+
 	//{
 	//	ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
 	//	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
@@ -472,9 +480,9 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	mMainPassCB.lights[0].direction = { 0.57735f, -0.57735f, 0.57735f };
 	mMainPassCB.lights[0].strength = { 0.9f, 0.9f, 0.9f };
 	mMainPassCB.lights[1].direction = { -0.57735f, -0.57735f, 0.57735f };
-	mMainPassCB.lights[1].strength = { 0.5f, 0.5f, 0.5f };
+	mMainPassCB.lights[1].strength = { 0.3f, 0.3f, 0.3f };
 	mMainPassCB.lights[2].direction = { 0.0f, -0.707f, -0.707f };
-	mMainPassCB.lights[2].strength = { 0.2f, 0.2f, 0.2f };
+	mMainPassCB.lights[2].strength = { 0.15f, 0.15f, 0.15f };
 
 	auto CurrentMainPassCB = mCurrentFrameResource->MainPassCB.get();
 	CurrentMainPassCB->CopyData(0, mMainPassCB);
@@ -559,11 +567,11 @@ void ApplicationInstance::LoadTextures()
 	// WoodCrate01
 	{
 		auto texture = std::make_unique<Texture>();
-		texture->name = "WoodCrate01";
+		texture->name = "WireFence";
 #if RENDERDOC_BUILD
-		texture->filename = L"../../../textures/WoodCrate01.dds";
+		texture->filename = L"../../../textures/WireFence.dds";
 #else // RENDERDOC_BUILD
-		texture->filename = L"../textures/WoodCrate01.dds";
+		texture->filename = L"../textures/WireFence.dds";
 #endif // RENDERDOC_BUILD
 
 		ThrowIfFailed(CreateDDSTextureFromFile12(mDevice.Get(),
@@ -575,6 +583,48 @@ void ApplicationInstance::LoadTextures()
 		mTextures[texture->name] = std::move(texture);
 	}
 }
+
+void ApplicationInstance::BuildRootSignature()
+{
+	CD3DX12_DESCRIPTOR_RANGE TextureTable;
+	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	CD3DX12_ROOT_PARAMETER params[4];
+
+	params[0].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[1].InitAsConstantBufferView(0);
+	params[2].InitAsConstantBufferView(1);
+	params[3].InitAsConstantBufferView(2);
+
+	auto StaticSamplers = GetStaticSamplers();
+
+	CD3DX12_ROOT_SIGNATURE_DESC desc(4,
+									 params,
+									 StaticSamplers.size(),
+									 StaticSamplers.data(),
+									 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	Microsoft::WRL::ComPtr<ID3DBlob> signature = nullptr;
+	Microsoft::WRL::ComPtr<ID3DBlob> error = nullptr;
+
+	HRESULT hr = D3D12SerializeRootSignature(&desc,
+											 D3D_ROOT_SIGNATURE_VERSION_1,
+											 signature.GetAddressOf(),
+											 error.GetAddressOf());
+
+	if (error != nullptr)
+	{
+		::OutputDebugStringA(static_cast<char*>(error->GetBufferPointer()));
+	}
+
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(mDevice->CreateRootSignature(0,
+											   signature->GetBufferPointer(),
+											   signature->GetBufferSize(),
+											   IID_PPV_ARGS(mRootSignature.GetAddressOf())));
+}
+
 
 void ApplicationInstance::BuildDescriptorHeaps()
 {
@@ -622,9 +672,9 @@ void ApplicationInstance::BuildDescriptorHeaps()
 
 		descriptor.Offset(1, mCBVSRVDescriptorSize);
 
-		// WoodCrate01
+		// WireFence
 		{
-			auto texture = mTextures["WoodCrate01"]->resource;
+			auto texture = mTextures["WireFence"]->resource;
 
 			desc.Format = texture->GetDesc().Format;
 			desc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
@@ -635,55 +685,29 @@ void ApplicationInstance::BuildDescriptorHeaps()
 	}
 }
 
-void ApplicationInstance::BuildRootSignature()
-{
-	CD3DX12_DESCRIPTOR_RANGE TextureTable;
-	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-
-	CD3DX12_ROOT_PARAMETER params[4];
-
-	params[0].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
-	params[1].InitAsConstantBufferView(0);
-	params[2].InitAsConstantBufferView(1);
-	params[3].InitAsConstantBufferView(2);
-
-	auto StaticSamplers = GetStaticSamplers();
-
-	CD3DX12_ROOT_SIGNATURE_DESC desc(4,
-									 params,
-									 StaticSamplers.size(),
-									 StaticSamplers.data(),
-									 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-	Microsoft::WRL::ComPtr<ID3DBlob> signature = nullptr;
-	Microsoft::WRL::ComPtr<ID3DBlob> error = nullptr;
-
-	HRESULT hr = D3D12SerializeRootSignature(&desc,
-											 D3D_ROOT_SIGNATURE_VERSION_1,
-											 signature.GetAddressOf(),
-											 error.GetAddressOf());
-
-	if (error != nullptr)
-	{
-		::OutputDebugStringA(static_cast<char*>(error->GetBufferPointer()));
-	}
-
-	ThrowIfFailed(hr);
-
-	ThrowIfFailed(mDevice->CreateRootSignature(0,
-											   signature->GetBufferPointer(),
-											   signature->GetBufferSize(),
-											   IID_PPV_ARGS(mRootSignature.GetAddressOf())));
-}
-
 void ApplicationInstance::BuildShadersAndInputLayout()
 {
+	const D3D_SHADER_MACRO defines[] =
+	{
+		"FOG", "1",
+		nullptr, nullptr
+	};
+	
+	const D3D_SHADER_MACRO AlphaTestDefines[] =
+	{
+		"FOG", "1",
+		"ALPHA_TEST", "1",
+		nullptr, nullptr
+	};
+
 #if RENDERDOC_BUILD
 	mShaders["VS"] = Utils::CompileShader(L"../../shaders/default.hlsl", nullptr, "VS", "vs_5_0");
-	mShaders["PS"] = Utils::CompileShader(L"../../shaders/default.hlsl", nullptr, "PS", "ps_5_0");
+	mShaders["PS"] = Utils::CompileShader(L"../../shaders/default.hlsl", defines, "PS", "ps_5_0");
+	mShaders["AlphaTestedPS"] = Utils::CompileShader(L"../../shaders/default.hlsl", AlphaTestDefines, "PS", "ps_5_0");
 #else // RENDERDOC_BUILD
 	mShaders["VS"] = Utils::CompileShader(L"shaders/default.hlsl", nullptr, "VS", "vs_5_0");
-	mShaders["PS"] = Utils::CompileShader(L"shaders/default.hlsl", nullptr, "PS", "ps_5_0");
+	mShaders["PS"] = Utils::CompileShader(L"shaders/default.hlsl", defines, "PS", "ps_5_0");
+	mShaders["AlphaTestedPS"] = Utils::CompileShader(L"shaders/default.hlsl", AlphaTestDefines, "PS", "ps_5_0");
 #endif // RENDERDOC_BUILD
 
 	mInputLayout =
@@ -881,6 +905,37 @@ void ApplicationInstance::BuildPipelineStateObjects()
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque_wireframe"])));
 	}
+
+	// transparent
+	{
+		D3D12_RENDER_TARGET_BLEND_DESC TransparentBlendDesc;
+
+		TransparentBlendDesc.BlendEnable = true;
+		TransparentBlendDesc.LogicOpEnable = false;
+		TransparentBlendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		TransparentBlendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		TransparentBlendDesc.BlendOp = D3D12_BLEND_OP_ADD;
+		TransparentBlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+		TransparentBlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
+		TransparentBlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		TransparentBlendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
+		TransparentBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+		desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+		desc.BlendState.RenderTarget[0] = TransparentBlendDesc;
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["transparent"])));
+	}
+
+	// alpha tested
+	{
+		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["AlphaTestedPS"]->GetBufferPointer());
+		desc.PS.BytecodeLength = mShaders["AlphaTestedPS"]->GetBufferSize();
+		desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["alpha_tested"])));
+	}
 }
 
 void ApplicationInstance::BuildFrameResources()
@@ -914,17 +969,17 @@ void ApplicationInstance::BuildMaterials()
 		material->name = "water";
 		material->ConstantBufferIndex = ConstantBufferIndex++;
 		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
-		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-		material->FresnelR0 = XMFLOAT3(0.2f, 0.2f, 0.2f);
+		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.5f);
+		material->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
 		material->roughness = 0.0f;
 
 		mMaterials[material->name] = std::move(material);
 	}
 
-	// wood
+	// wire fence
 	{
 		auto material = std::make_unique<Material>();
-		material->name = "wood";
+		material->name = "WireFence";
 		material->ConstantBufferIndex = ConstantBufferIndex++;
 		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
 		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -974,12 +1029,12 @@ void ApplicationInstance::BuildRenderItems()
 
 		mWavesRenderItem = item.get();
 
-		mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
+		mLayerRenderItems[static_cast<int>(RenderLayer::transparent)].push_back(item.get());
 
 		mRenderItems.push_back(std::move(item));
 	}
 
-	// wood
+	// wire fence
 	{
 		auto item = std::make_unique<RenderItem>();
 
@@ -987,13 +1042,13 @@ void ApplicationInstance::BuildRenderItems()
 		item->TexCoordTransform = MathHelper::Identity4x4();
 		item->ConstantBufferIndex = ObjectCBIndex++;
 		item->geometry = mMeshGeometries["box"].get();
-		item->material = mMaterials["wood"].get();
+		item->material = mMaterials["WireFence"].get();
 		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		item->IndexCount = item->geometry->DrawArgs["box"].IndexCount;
 		item->StartIndexLocation = item->geometry->DrawArgs["box"].StartIndexLocation;
 		item->BaseVertexLocation = item->geometry->DrawArgs["box"].BaseVertexLocation;
 
-		mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
+		mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTested)].push_back(item.get());
 
 		mRenderItems.push_back(std::move(item));
 	}
