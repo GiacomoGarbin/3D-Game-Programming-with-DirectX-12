@@ -7,6 +7,11 @@
 
 struct Vertex
 {
+	Vertex();
+	Vertex(float px, float py, float pz,
+		   float nx, float ny, float nz, 
+		   float tx, float ty);
+
 	XMFLOAT3 position;
 	XMFLOAT3 normal;
 	XMFLOAT2 TexCoord;
@@ -47,7 +52,10 @@ struct MainPassConstants
 
 struct FrameResource
 {
-	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT ObjectCount, UINT MaterialCount, UINT WaveVertexCount);
+	FrameResource(ID3D12Device* device,
+				  UINT MainPassCount,
+				  UINT ObjectCount,
+				  UINT MaterialCount);
 	~FrameResource();
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;
