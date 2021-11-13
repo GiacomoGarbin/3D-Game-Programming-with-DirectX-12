@@ -3,6 +3,8 @@
 #include "GeometryGenerator.h"
 #include "waves.h"
 
+#include <map>
+
 #define RENDERDOC_BUILD 0
 
 const int gFrameResourcesCount = 3;
@@ -33,6 +35,7 @@ enum class RenderLayer : int
 	opaque = 0,
 	transparent,
 	AlphaTested,
+	AlphaTestedTree,
 	
 	count
 };
@@ -57,6 +60,7 @@ class ApplicationInstance : public ApplicationFramework
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
+	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayoutTree;
 
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPipelineStateObjects;
 
@@ -80,9 +84,6 @@ class ApplicationInstance : public ApplicationFramework
 	float mCameraPhi = XM_PIDIV2 - 0.1f;
 	float mCameraRadius = 50.0f;
 
-	//float mLightTheta = 1.25f * XM_PI;
-	//float mLightPhi = XM_PIDIV4;
-
 	POINT mLastMousePosition;
 
 	virtual void OnResize() override;
@@ -103,8 +104,8 @@ class ApplicationInstance : public ApplicationFramework
 
 	void BuildDescriptorHeaps();
 	void BuildRootSignature();
-	void BuildShadersAndInputLayout();
-	void BuildMeshGeometry(); // land, waves and box geometry
+	void BuildShadersAndInputLayouts();
+	void BuildMeshGeometry(); // land, waves, box and tree geometry
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -153,7 +154,7 @@ bool ApplicationInstance::init()
 	LoadTextures();
 	BuildRootSignature();
 	BuildDescriptorHeaps();
-	BuildShadersAndInputLayout();
+	BuildShadersAndInputLayouts();
 	BuildMeshGeometry();
 	BuildMaterials();
 	BuildRenderItems();
@@ -258,6 +259,9 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	mCommandList->SetPipelineState(mPipelineStateObjects["alpha_tested"].Get());
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTested)]);
+	
+	mCommandList->SetPipelineState(mPipelineStateObjects["tree"].Get());
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTestedTree)]);
 
 	mCommandList->SetPipelineState(mPipelineStateObjects["transparent"].Get());
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::transparent)]);
@@ -478,7 +482,7 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	//mMainPassCB.lights[0].strength = { 1.0f, 1.0f, 0.9f };
 
 	mMainPassCB.lights[0].direction = { 0.57735f, -0.57735f, 0.57735f };
-	mMainPassCB.lights[0].strength = { 0.9f, 0.9f, 0.9f };
+	mMainPassCB.lights[0].strength = { 0.6f, 0.6f, 0.6f };
 	mMainPassCB.lights[1].direction = { -0.57735f, -0.57735f, 0.57735f };
 	mMainPassCB.lights[1].strength = { 0.3f, 0.3f, 0.3f };
 	mMainPassCB.lights[2].direction = { 0.0f, -0.707f, -0.707f };
@@ -526,15 +530,17 @@ void ApplicationInstance::UpdateWaves(const GameTimer& timer)
 
 void ApplicationInstance::LoadTextures()
 {
-	// grass
+	auto LoadTexture = [&](const std::string& name)
 	{
-		auto texture = std::make_unique<Texture>();
-		texture->name = "grass";
 #if RENDERDOC_BUILD
-		texture->filename = L"../../../textures/grass.dds";
+		std::wstring filename = L"../../../textures/" + std::wstring(name.begin(), name.end()) + L".dds";
 #else // RENDERDOC_BUILD
-		texture->filename = L"../textures/grass.dds";
+		std::wstring filename = L"../textures/" + std::wstring(name.begin(), name.end()) + L".dds";
 #endif // RENDERDOC_BUILD
+
+		auto texture = std::make_unique<Texture>();
+		texture->name = name;
+		texture->filename = filename;
 
 		ThrowIfFailed(CreateDDSTextureFromFile12(mDevice.Get(),
 												 mCommandList.Get(),
@@ -543,44 +549,19 @@ void ApplicationInstance::LoadTextures()
 												 texture->UploadHeap));
 
 		mTextures[texture->name] = std::move(texture);
-	}
+	};
 
-	// water1
+	std::vector<std::string> names =
 	{
-		auto texture = std::make_unique<Texture>();
-		texture->name = "water1";
-#if RENDERDOC_BUILD
-		texture->filename = L"../../../textures/water1.dds";
-#else // RENDERDOC_BUILD
-		texture->filename = L"../textures/water1.dds";
-#endif // RENDERDOC_BUILD
+		"grass",
+		"water1",
+		"WireFence",
+		"treeArray2",
+	};
 
-		ThrowIfFailed(CreateDDSTextureFromFile12(mDevice.Get(),
-												 mCommandList.Get(),
-												 texture->filename.c_str(),
-												 texture->resource,
-												 texture->UploadHeap));
-
-		mTextures[texture->name] = std::move(texture);
-	}
-
-	// WoodCrate01
+	for (const std::string& name : names)
 	{
-		auto texture = std::make_unique<Texture>();
-		texture->name = "WireFence";
-#if RENDERDOC_BUILD
-		texture->filename = L"../../../textures/WireFence.dds";
-#else // RENDERDOC_BUILD
-		texture->filename = L"../textures/WireFence.dds";
-#endif // RENDERDOC_BUILD
-
-		ThrowIfFailed(CreateDDSTextureFromFile12(mDevice.Get(),
-												 mCommandList.Get(),
-												 texture->filename.c_str(),
-												 texture->resource,
-												 texture->UploadHeap));
-
-		mTextures[texture->name] = std::move(texture);
+		LoadTexture(name);
 	}
 }
 
@@ -625,67 +606,64 @@ void ApplicationInstance::BuildRootSignature()
 											   IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
 
-
 void ApplicationInstance::BuildDescriptorHeaps()
 {
+	// create SRV heap
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-		desc.NumDescriptors = 3;
+		desc.NumDescriptors = 4;
 		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mSRVDescriptorHeap.GetAddressOf())));
 	}
 
+	std::vector<std::pair<std::string, D3D12_SRV_DIMENSION>> textures =
 	{
-		CD3DX12_CPU_DESCRIPTOR_HANDLE descriptor(mSRVDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+		{ "grass", D3D12_SRV_DIMENSION_TEXTURE2D },
+		{ "water1", D3D12_SRV_DIMENSION_TEXTURE2D },
+		{ "WireFence", D3D12_SRV_DIMENSION_TEXTURE2D },
+		{ "treeArray2", D3D12_SRV_DIMENSION_TEXTURE2DARRAY },
+	};
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE descriptor(mSRVDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+
+	auto CreateSRV = [&](const std::string& name, D3D12_SRV_DIMENSION dimension)
+	{
+		const auto& texture = mTextures[name]->resource;
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+		desc.Format = texture->GetDesc().Format;
+		desc.ViewDimension = dimension;
 		desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		desc.Texture2D.MostDetailedMip = 0;
-		desc.Texture2D.ResourceMinLODClamp = 0.0f;
-
-		// grass
+		
+		switch (dimension)
 		{
-			auto texture = mTextures["grass"]->resource;
-
-			desc.Format = texture->GetDesc().Format;
-			desc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
-
-			mDevice->CreateShaderResourceView(texture.Get(), &desc, descriptor);
-
+			case D3D12_SRV_DIMENSION_TEXTURE2D:
+				desc.Texture2D.MostDetailedMip = 0;
+				desc.Texture2D.ResourceMinLODClamp = 0.0f;
+				desc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
+				break;
+			case D3D12_SRV_DIMENSION_TEXTURE2DARRAY:
+				desc.Texture2DArray.MostDetailedMip = 0;
+				desc.Texture2DArray.MipLevels = texture->GetDesc().MipLevels;
+				desc.Texture2DArray.FirstArraySlice = 0;
+				desc.Texture2DArray.ArraySize = texture->GetDesc().DepthOrArraySize;
+				break;
 		}
+
+		mDevice->CreateShaderResourceView(texture.Get(), &desc, descriptor);
 
 		descriptor.Offset(1, mCBVSRVDescriptorSize);
+	};
 
-		// water1
-		{
-			auto texture = mTextures["water1"]->resource;
-
-			desc.Format = texture->GetDesc().Format;
-			desc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
-
-			mDevice->CreateShaderResourceView(texture.Get(), &desc, descriptor);
-
-		}
-
-		descriptor.Offset(1, mCBVSRVDescriptorSize);
-
-		// WireFence
-		{
-			auto texture = mTextures["WireFence"]->resource;
-
-			desc.Format = texture->GetDesc().Format;
-			desc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
-
-			mDevice->CreateShaderResourceView(texture.Get(), &desc, descriptor);
-
-		}
+	for (const auto& texture : textures)
+	{
+		CreateSRV(texture.first, texture.second);
 	}
 }
 
-void ApplicationInstance::BuildShadersAndInputLayout()
+void ApplicationInstance::BuildShadersAndInputLayouts()
 {
 	const D3D_SHADER_MACRO defines[] =
 	{
@@ -708,6 +686,9 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 	mShaders["VS"] = Utils::CompileShader(L"shaders/default.hlsl", nullptr, "VS", "vs_5_0");
 	mShaders["PS"] = Utils::CompileShader(L"shaders/default.hlsl", defines, "PS", "ps_5_0");
 	mShaders["AlphaTestedPS"] = Utils::CompileShader(L"shaders/default.hlsl", AlphaTestDefines, "PS", "ps_5_0");
+	mShaders["TreeVS"] = Utils::CompileShader(L"shaders/tree.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["TreeGS"] = Utils::CompileShader(L"shaders/tree.hlsl", nullptr, "GS", "gs_5_0");
+	mShaders["TreePS"] = Utils::CompileShader(L"shaders/tree.hlsl", AlphaTestDefines, "PS", "ps_5_0");
 #endif // RENDERDOC_BUILD
 
 	mInputLayout =
@@ -715,6 +696,12 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+	};
+
+	mInputLayoutTree =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{ "SIZE",     0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 	};
 }
 
@@ -869,15 +856,76 @@ void ApplicationInstance::BuildMeshGeometry()
 
 		mMeshGeometries[geometry->name] = std::move(geometry);
 	}
+
+	// tree
+	{
+		const UINT count = 16;
+
+		struct VertexTree
+		{
+			XMFLOAT3 position;
+			XMFLOAT2 size;
+		};
+
+		std::array<VertexTree, count> vertices;
+
+		for (VertexTree& vertex : vertices)
+		{
+			vertex.position.x = MathHelper::RandFloat(-45.0f, +45.0f);
+			vertex.position.z = MathHelper::RandFloat(-45.0f, +45.0f);
+			vertex.position.y = 8.0f + GetHillHeight(vertex.position.x, vertex.position.z);
+
+			vertex.size = XMFLOAT2(20.0f, 20.0f);
+		}
+		
+		std::array<std::uint16_t, count> indices =
+		{
+			 0,  1,  2,  3,
+			 4,  5,  6,  7,
+			 8,  9, 10, 11,
+			12, 13, 14, 15,
+		};
+
+		SubMeshGeometry SubMesh;
+		SubMesh.IndexCount = indices.size();
+		SubMesh.StartIndexLocation = 0;
+		SubMesh.BaseVertexLocation = 0;
+
+		UINT VertexBufferByteSize = vertices.size() * sizeof(Vertex);
+		UINT IndexBufferByteSize = indices.size() * sizeof(uint16_t);
+
+		auto geometry = std::make_unique<MeshGeometry>();
+		geometry->name = "tree";
+
+		ThrowIfFailed(D3DCreateBlob(VertexBufferByteSize, &geometry->VertexBufferCPU));
+		CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), VertexBufferByteSize);
+
+		ThrowIfFailed(D3DCreateBlob(IndexBufferByteSize, &geometry->IndexBufferCPU));
+		CopyMemory(geometry->IndexBufferCPU->GetBufferPointer(), indices.data(), IndexBufferByteSize);
+
+		geometry->VertexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(), mCommandList.Get(), vertices.data(), VertexBufferByteSize, geometry->VertexBufferUploader);
+		geometry->IndexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(), mCommandList.Get(), indices.data(), IndexBufferByteSize, geometry->IndexBufferUploader);
+
+		geometry->VertexByteStride = sizeof(VertexTree);
+		geometry->VertexBufferByteSize = VertexBufferByteSize;
+		geometry->IndexFormat = DXGI_FORMAT_R16_UINT;
+		geometry->IndexBufferByteSize = IndexBufferByteSize;
+
+		geometry->DrawArgs["tree"] = SubMesh;
+
+		mMeshGeometries[geometry->name] = std::move(geometry);
+	}
 }
 
 void ApplicationInstance::BuildPipelineStateObjects()
 {
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;
-	ZeroMemory(&desc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+	std::map<std::string, D3D12_GRAPHICS_PIPELINE_STATE_DESC> descs;
 
 	// opaque
 	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["opaque"];
+		ZeroMemory(&desc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+
 		desc.pRootSignature = mRootSignature.Get();
 		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["VS"]->GetBufferPointer());
 		desc.VS.BytecodeLength = mShaders["VS"]->GetBufferSize();
@@ -901,6 +949,9 @@ void ApplicationInstance::BuildPipelineStateObjects()
 
 	// opaque wireframe
 	{
+		descs["opaque_wireframe"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["opaque_wireframe"];
+
 		desc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque_wireframe"])));
@@ -908,33 +959,52 @@ void ApplicationInstance::BuildPipelineStateObjects()
 
 	// transparent
 	{
-		D3D12_RENDER_TARGET_BLEND_DESC TransparentBlendDesc;
+		descs["transparent"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["transparent"];
 
-		TransparentBlendDesc.BlendEnable = true;
-		TransparentBlendDesc.LogicOpEnable = false;
-		TransparentBlendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-		TransparentBlendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-		TransparentBlendDesc.BlendOp = D3D12_BLEND_OP_ADD;
-		TransparentBlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
-		TransparentBlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
-		TransparentBlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-		TransparentBlendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
-		TransparentBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-		desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-		desc.BlendState.RenderTarget[0] = TransparentBlendDesc;
+		desc.BlendState.RenderTarget[0].BlendEnable = true;
+		desc.BlendState.RenderTarget[0].LogicOpEnable = false;
+		desc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		desc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		desc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+		desc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		desc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+		desc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		desc.BlendState.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
+		desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["transparent"])));
 	}
 
 	// alpha tested
 	{
+		descs["alpha_tested"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["alpha_tested"];
+
 		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["AlphaTestedPS"]->GetBufferPointer());
 		desc.PS.BytecodeLength = mShaders["AlphaTestedPS"]->GetBufferSize();
-		desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["alpha_tested"])));
+	}
+
+	// tree
+	{
+		descs["tree"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["tree"];
+
+		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["TreeVS"]->GetBufferPointer());
+		desc.VS.BytecodeLength = mShaders["TreeVS"]->GetBufferSize();
+		desc.GS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["TreeGS"]->GetBufferPointer());
+		desc.GS.BytecodeLength = mShaders["TreeGS"]->GetBufferSize();
+		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["TreePS"]->GetBufferPointer());
+		desc.PS.BytecodeLength = mShaders["TreePS"]->GetBufferSize();
+		desc.InputLayout.pInputElementDescs = mInputLayoutTree.data();
+		desc.InputLayout.NumElements = mInputLayoutTree.size();
+		desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["tree"])));
 	}
 }
 
@@ -950,44 +1020,41 @@ void ApplicationInstance::BuildMaterials()
 {
 	UINT ConstantBufferIndex = 0;
 
-	// grass
+	auto BuildMaterial = [&](const std::string& name,
+							 const XMFLOAT4& DiffuseAlbedo,
+							 const XMFLOAT3& FresnelR0,
+							 float roughness)
 	{
 		auto material = std::make_unique<Material>();
-		material->name = "grass";
+		material->name = name;
 		material->ConstantBufferIndex = ConstantBufferIndex++;
 		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
-		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-		material->FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
-		material->roughness = 0.125f;
+		material->DiffuseAlbedo = DiffuseAlbedo;
+		material->FresnelR0 = FresnelR0;
+		material->roughness = roughness;
 
 		mMaterials[material->name] = std::move(material);
-	}
+	};
 
-	// water
-	{
-		auto material = std::make_unique<Material>();
-		material->name = "water";
-		material->ConstantBufferIndex = ConstantBufferIndex++;
-		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
-		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.5f);
-		material->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
-		material->roughness = 0.0f;
+	BuildMaterial("grass",
+				  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),
+				  XMFLOAT3(0.01f, 0.01f, 0.01f),
+				  0.125f);
 
-		mMaterials[material->name] = std::move(material);
-	}
+	BuildMaterial("water",
+				  XMFLOAT4(1.0f, 1.0f, 1.0f, 0.5f),
+				  XMFLOAT3(0.1f, 0.1f, 0.1f),
+				  0.0f);
 
-	// wire fence
-	{
-		auto material = std::make_unique<Material>();
-		material->name = "WireFence";
-		material->ConstantBufferIndex = ConstantBufferIndex++;
-		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
-		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-		material->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
-		material->roughness = 0.25f;
+	BuildMaterial("WireFence",
+				  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),
+				  XMFLOAT3(0.02f, 0.02f, 0.02f),
+				  0.25f);
 
-		mMaterials[material->name] = std::move(material);
-	}
+	BuildMaterial("tree",
+				  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),
+				  XMFLOAT3(0.01f, 0.01f, 0.01f),
+				  0.125f);
 }
 
 void ApplicationInstance::BuildRenderItems()
@@ -1049,6 +1116,25 @@ void ApplicationInstance::BuildRenderItems()
 		item->BaseVertexLocation = item->geometry->DrawArgs["box"].BaseVertexLocation;
 
 		mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTested)].push_back(item.get());
+
+		mRenderItems.push_back(std::move(item));
+	}
+
+	// tree
+	{
+		auto item = std::make_unique<RenderItem>();
+
+		item->world = MathHelper::Identity4x4();
+		item->TexCoordTransform = MathHelper::Identity4x4();
+		item->ConstantBufferIndex = ObjectCBIndex++;
+		item->geometry = mMeshGeometries["tree"].get();
+		item->material = mMaterials["tree"].get();
+		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+		item->IndexCount = item->geometry->DrawArgs["tree"].IndexCount;
+		item->StartIndexLocation = item->geometry->DrawArgs["tree"].StartIndexLocation;
+		item->BaseVertexLocation = item->geometry->DrawArgs["tree"].BaseVertexLocation;
+
+		mLayerRenderItems[static_cast<int>(RenderLayer::AlphaTestedTree)].push_back(item.get());
 
 		mRenderItems.push_back(std::move(item));
 	}
