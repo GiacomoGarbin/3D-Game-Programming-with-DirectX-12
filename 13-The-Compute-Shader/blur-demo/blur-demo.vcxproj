@@ -171,6 +171,7 @@
     <ClCompile Include="..\..\common\GeometryGenerator.cpp" />
     <ClCompile Include="..\..\common\MathHelper.cpp" />
     <ClCompile Include="..\..\common\utils.cpp" />
+    <ClCompile Include="blur.cpp" />
     <ClCompile Include="FrameResource.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="waves.cpp" />
@@ -187,6 +188,7 @@
     <ClInclude Include="..\..\common\GeometryGenerator.h" />
     <ClInclude Include="..\..\common\MathHelper.h" />
     <ClInclude Include="..\..\common\utils.h" />
+    <ClInclude Include="blur.h" />
     <ClInclude Include="FrameResource.h" />
     <ClInclude Include="waves.h" />
   </ItemGroup>
