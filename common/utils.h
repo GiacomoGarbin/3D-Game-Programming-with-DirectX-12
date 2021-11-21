@@ -22,6 +22,7 @@
 using namespace DirectX;
 
 // std library
+#include <map>
 #include <unordered_map>
 #include <array>
 
