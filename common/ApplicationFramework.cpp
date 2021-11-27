@@ -155,6 +155,7 @@ void ApplicationFramework::CreateSwapChain()
 
 void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
 {
+	// RTV
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc;
 		desc.NumDescriptors = SwapChainBufferSize;
@@ -165,6 +166,7 @@ void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
 		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mRTVHeap.GetAddressOf())));
 	}
 
+	// DSV
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc;
 		desc.NumDescriptors = 1;
@@ -175,6 +177,7 @@ void ApplicationFramework::CreateRTVAndDSVDescriptorHeaps()
 		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mDSVHeap.GetAddressOf())));
 	}
 
+	// ImGUI SRV
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc;
 		desc.NumDescriptors = 1;
