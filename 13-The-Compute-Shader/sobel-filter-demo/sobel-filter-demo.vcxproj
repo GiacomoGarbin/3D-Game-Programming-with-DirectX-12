@@ -166,6 +166,8 @@
     <ClCompile Include="blur.cpp" />
     <ClCompile Include="FrameResource.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="RenderTarget.cpp" />
+    <ClCompile Include="sobel.cpp" />
     <ClCompile Include="waves.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -182,6 +184,8 @@
     <ClInclude Include="..\..\common\utils.h" />
     <ClInclude Include="blur.h" />
     <ClInclude Include="FrameResource.h" />
+    <ClInclude Include="RenderTarget.h" />
+    <ClInclude Include="sobel.h" />
     <ClInclude Include="waves.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

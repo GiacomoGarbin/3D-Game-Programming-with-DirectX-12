@@ -28,6 +28,10 @@ class Blur
 	void BuildDescriptors();
 
 	std::vector<float> CalcGaussWeights(float sigma);
+	
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
+
+	int mCount = 4;
 
 public:
 	Blur(ID3D12Device* device,
@@ -38,15 +42,20 @@ public:
 	void OnResize(UINT width, UINT height);
 	
 	void execute(ID3D12GraphicsCommandList* CommandList,
-				 ID3D12RootSignature* RootSignature,
 				 ID3D12PipelineState* HorzBlurPSO,
 				 ID3D12PipelineState* VertBlurPSO,
-				 ID3D12Resource* input,
-				 int count);
+				 ID3D12Resource* input);
 	
 	ID3D12Resource* output();
+
+	UINT DescriptorCount() const;
 
 	void BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE CPUDescriptor,
 						  CD3DX12_GPU_DESCRIPTOR_HANDLE GPUDescriptor,
 						  UINT DescriptorSize);
+
+	void BuildRootSignature();
+	ID3D12RootSignature* GetRootSignature();
+
+	int& GetCount();
 };

@@ -90,6 +90,11 @@ void Blur::BuildDescriptors()
 	}
 }
 
+UINT Blur::DescriptorCount() const
+{
+	return 4;
+}
+
 void Blur::BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE CPUDescriptor,
 							CD3DX12_GPU_DESCRIPTOR_HANDLE GPUDescriptor,
 							UINT DescriptorSize)
@@ -108,22 +113,20 @@ void Blur::BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE CPUDescriptor,
 }
 
 void Blur::execute(ID3D12GraphicsCommandList* CommandList,
-				   ID3D12RootSignature* RootSignature,
 				   ID3D12PipelineState* HorzBlurPSO,
 				   ID3D12PipelineState* VertBlurPSO,
-				   ID3D12Resource* input,
-				   int count)
+				   ID3D12Resource* input)
 {
 	std::vector<float> weights = CalcGaussWeights(2.5f);
 	INT radius = weights.size() / 2;
 
-	CommandList->SetComputeRootSignature(RootSignature);
+	CommandList->SetComputeRootSignature(mRootSignature.Get());
 
 	CommandList->SetComputeRoot32BitConstants(0, 1, &radius, 0);
 	CommandList->SetComputeRoot32BitConstants(0, (UINT)weights.size(), weights.data(), 1);
 
 	{
-		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(input, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(input, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE);
 		CommandList->ResourceBarrier(1, &transition);
 	}
 
@@ -145,7 +148,7 @@ void Blur::execute(ID3D12GraphicsCommandList* CommandList,
 		CommandList->ResourceBarrier(1, &transition);
 	}
 
-	for (UINT i = 0; i < count; ++i)
+	for (UINT i = 0; i < mCount; ++i)
 	{
 		// horizontal blur
 		{
@@ -234,4 +237,56 @@ std::vector<float> Blur::CalcGaussWeights(float sigma)
 ID3D12Resource* Blur::output()
 {
 	return mBlurMap0.Get();
+}
+
+void Blur::BuildRootSignature()
+{
+	CD3DX12_DESCRIPTOR_RANGE SRV;
+	SRV.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	CD3DX12_DESCRIPTOR_RANGE UAV;
+	UAV.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+
+	CD3DX12_ROOT_PARAMETER params[3];
+	params[0].InitAsConstants(12, 0);
+	params[1].InitAsDescriptorTable(1, &SRV);
+	params[2].InitAsDescriptorTable(1, &UAV);
+
+	// auto StaticSamplers = GetStaticSamplers();
+
+	CD3DX12_ROOT_SIGNATURE_DESC desc(3,
+									 params,
+									 0,
+									 nullptr,
+									 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	Microsoft::WRL::ComPtr<ID3DBlob> signature = nullptr;
+	Microsoft::WRL::ComPtr<ID3DBlob> error = nullptr;
+
+	HRESULT hr = D3D12SerializeRootSignature(&desc,
+											 D3D_ROOT_SIGNATURE_VERSION_1,
+											 signature.GetAddressOf(),
+											 error.GetAddressOf());
+
+	if (error != nullptr)
+	{
+		::OutputDebugStringA(static_cast<char*>(error->GetBufferPointer()));
+	}
+
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(mDevice->CreateRootSignature(0,
+											   signature->GetBufferPointer(),
+											   signature->GetBufferSize(),
+											   IID_PPV_ARGS(mRootSignature.GetAddressOf())));
+}
+
+ID3D12RootSignature* Blur::GetRootSignature()
+{
+	return mRootSignature.Get();
+}
+
+int& Blur::GetCount()
+{
+	return mCount;
 }

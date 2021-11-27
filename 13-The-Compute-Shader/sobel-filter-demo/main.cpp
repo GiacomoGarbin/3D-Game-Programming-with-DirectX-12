@@ -3,6 +3,8 @@
 #include "GeometryGenerator.h"
 #include "waves.h"
 #include "blur.h"
+#include "sobel.h"
+#include "RenderTarget.h"
 
 #define RENDERDOC_BUILD 0
 
@@ -47,7 +49,6 @@ class ApplicationInstance : public ApplicationFramework
 	UINT mCBVSRVUAVDescriptorSize = 0;
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12RootSignature> mPostProcessRootSignature = nullptr;
 
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mCBVSRVUAVDescriptorHeap = nullptr;
 
@@ -68,6 +69,9 @@ class ApplicationInstance : public ApplicationFramework
 
 	std::unique_ptr<Blur> mBlur;
 
+	std::unique_ptr<RenderTarget> mOffscreenRT;
+	std::unique_ptr<Sobel> mSobel;
+
 	MainPassConstants mMainPassCB;
 	UINT mMainPassCBVOffset = 0;
 
@@ -83,6 +87,8 @@ class ApplicationInstance : public ApplicationFramework
 	float mCameraRadius = 50.0f;
 
 	POINT mLastMousePosition;
+
+	virtual void CreateRTVAndDSVDescriptorHeaps() override;
 
 	virtual void OnResize() override;
 	virtual void update(GameTimer& timer) override;
@@ -101,8 +107,7 @@ class ApplicationInstance : public ApplicationFramework
 	void UpdateWaves(const GameTimer& timer);
 
 	void BuildDescriptorHeaps();
-	void BuildRootSignature();
-	void BuildPostProcessRootSignature();
+	void BuildRootSignatures();
 	void BuildShadersAndInputLayout();
 	void BuildMeshGeometry(); // land, waves and box geometry
 	void BuildPipelineStateObjects();
@@ -111,9 +116,10 @@ class ApplicationInstance : public ApplicationFramework
 	void BuildRenderItems();
 
 	void LoadTextures();
-	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6>& GetStaticSamplers();
 
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems);
+	void DrawFullscreenQuad(ID3D12GraphicsCommandList* CommandList);
 
 	float GetHillHeight(float x, float z) const;
 	XMFLOAT3 GetHillNormal(float x, float z) const;
@@ -148,13 +154,17 @@ bool ApplicationInstance::init()
 
 	mCBVSRVUAVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	//mWaves = std::make_unique<Waves>(256, 256, 0.03f, 0.25f, 2.0f, 0.2f);
+	//mWaves = std::make_unique<Waves>(128, 128, 0.03f, 0.25f, 2.0f, 0.2f);
 	mWaves = std::make_unique<Waves>(128, 128, 0.03f, 1.0f, 4.0f, 0.2f);
 
 	mBlur = std::make_unique<Blur>(mDevice.Get(), mMainWindowWidth, mMainWindowHeight, mBackBufferFormat);
 
+	mOffscreenRT = std::make_unique<RenderTarget>(mDevice.Get(), mMainWindowWidth, mMainWindowHeight, mBackBufferFormat);
+	mSobel = std::make_unique<Sobel>(mDevice.Get(), mMainWindowWidth, mMainWindowHeight, mBackBufferFormat);
+
 	LoadTextures();
-	BuildRootSignature();
-	BuildPostProcessRootSignature();
+	BuildRootSignatures();
 	BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
 	BuildMeshGeometry();
@@ -173,6 +183,42 @@ bool ApplicationInstance::init()
 	return true;
 }
 
+void ApplicationInstance::CreateRTVAndDSVDescriptorHeaps()
+{
+	// RTV
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC desc;
+		desc.NumDescriptors = SwapChainBufferSize + mOffscreenRT->DescriptorCount(); // +1 for offscreen render target
+		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		desc.NodeMask = 0;
+
+		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mRTVHeap.GetAddressOf())));
+	}
+
+	// DSV
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC desc;
+		desc.NumDescriptors = 1;
+		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		desc.NodeMask = 0;
+
+		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mDSVHeap.GetAddressOf())));
+	}
+
+	// ImGUI SRV
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC desc;
+		desc.NumDescriptors = 1;
+		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		desc.NodeMask = 0;
+
+		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mSRVHeap.GetAddressOf())));
+	}
+}
+
 void ApplicationInstance::OnResize()
 {
 	ApplicationFramework::OnResize();
@@ -183,6 +229,16 @@ void ApplicationInstance::OnResize()
 	if (mBlur)
 	{
 		mBlur->OnResize(mMainWindowWidth, mMainWindowHeight);
+	}
+
+	if (mSobel)
+	{
+		mSobel->OnResize(mMainWindowWidth, mMainWindowHeight);
+	}
+
+	if (mOffscreenRT)
+	{
+		mOffscreenRT->OnResize(mMainWindowWidth, mMainWindowHeight);
 	}
 }
 
@@ -211,16 +267,19 @@ void ApplicationInstance::update(GameTimer& timer)
 
 void ApplicationInstance::draw(GameTimer& timer)
 {
-	//ImGui_ImplDX12_NewFrame();
-	//ImGui_ImplWin32_NewFrame();
-	//ImGui::NewFrame();
+	ImGui_ImplDX12_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
 
-	//{
-	//	ImGui::Begin("clear render target color");
-	//	ImGui::End();
-	//}
+	{
+		ImGui::Begin("settings");
 
-	//ImGui::Render();
+		ImGui::DragInt("blur count", &mBlur->GetCount(), 1, 0, 4);
+
+		ImGui::End();
+	}
+
+	ImGui::Render();
 
 	auto CommandAllocator = mCurrentFrameResource->CommandAllocator;
 
@@ -235,26 +294,28 @@ void ApplicationInstance::draw(GameTimer& timer)
 		ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(), mPipelineStateObjects["opaque"].Get()));
 	}
 
+	{
+		ID3D12DescriptorHeap* heaps[] = { mCBVSRVUAVDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	}
+
+	mCommandList->SetPipelineState(mPipelineStateObjects["opaque"].Get());
+
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
 	{
-		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
 		mCommandList->ResourceBarrier(1, &transition);
 	}
 
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), (float*)&mMainPassCB.FogColor, 0, nullptr);
+	mCommandList->ClearRenderTargetView(mOffscreenRT->GetRTV(), (float*)&mMainPassCB.FogColor, 0, nullptr);
 	mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
 
 	{
-		D3D12_CPU_DESCRIPTOR_HANDLE rtv = GetCurrentBackBufferView();
+		D3D12_CPU_DESCRIPTOR_HANDLE rtv = mOffscreenRT->GetRTV();
 		D3D12_CPU_DESCRIPTOR_HANDLE dsv = GetDepthStencilView();
 		mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
-	}
-
-	{
-		ID3D12DescriptorHeap* heaps[] = { mCBVSRVUAVDescriptorHeap.Get() };
-		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 	}
 
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
@@ -270,37 +331,56 @@ void ApplicationInstance::draw(GameTimer& timer)
 	mCommandList->SetPipelineState(mPipelineStateObjects["transparent"].Get());
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::transparent)]);
 
+	{
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
+
+	mSobel->execute(mCommandList.Get(),
+					mPipelineStateObjects["sobel"].Get(),
+					mOffscreenRT->GetSRV());
+
 	mBlur->execute(mCommandList.Get(),
-				   mPostProcessRootSignature.Get(),
 				   mPipelineStateObjects["horz_blur"].Get(),
 				   mPipelineStateObjects["vert_blur"].Get(),
-				   GetCurrentBackBuffer(),
-				   4);
+				   mOffscreenRT->GetResource());
 
 	{
-		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
 		mCommandList->ResourceBarrier(1, &transition);
 	}
 
 	// copy blur output to back buffer
-	mCommandList->CopyResource(GetCurrentBackBuffer(), mBlur->output());
+	mCommandList->CopyResource(mOffscreenRT->GetResource(), mBlur->output());
 
 	{
-		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 		mCommandList->ResourceBarrier(1, &transition);
 	}
 
-	//{
-	//	ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
-	//	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	{
+		D3D12_CPU_DESCRIPTOR_HANDLE rtv = GetCurrentBackBufferView();
+		D3D12_CPU_DESCRIPTOR_HANDLE dsv = GetDepthStencilView();
+		mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
+	}
 
-	//	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-	//}
+	mCommandList->SetGraphicsRootSignature(mSobel->GetRootSignature());
+	mCommandList->SetPipelineState(mPipelineStateObjects["composite"].Get());
+	mCommandList->SetGraphicsRootDescriptorTable(0, mOffscreenRT->GetSRV());
+	mCommandList->SetGraphicsRootDescriptorTable(1, mSobel->output());
+	DrawFullscreenQuad(mCommandList.Get());
 
-	//{
-	//	CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-	//	mCommandList->ResourceBarrier(1, &transition);
-	//}
+	{
+		ID3D12DescriptorHeap* heaps[] = { mSRVHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+	}
+
+	{
+		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
 
 	ThrowIfFailed(mCommandList->Close());
 
@@ -608,24 +688,27 @@ void ApplicationInstance::LoadTextures()
 	}
 }
 
-void ApplicationInstance::BuildRootSignature()
+void ApplicationInstance::BuildRootSignatures()
 {
 	CD3DX12_DESCRIPTOR_RANGE TextureTable;
 	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
 
 	CD3DX12_ROOT_PARAMETER params[4];
 
-	params[0].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[0].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_ALL);
 	params[1].InitAsConstantBufferView(0);
 	params[2].InitAsConstantBufferView(1);
 	params[3].InitAsConstantBufferView(2);
-
+	//params[4].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_ALL);
+	
 	auto StaticSamplers = GetStaticSamplers();
 
 	CD3DX12_ROOT_SIGNATURE_DESC desc(4,
 									 params,
-									 StaticSamplers.size(),
-									 StaticSamplers.data(),
+									 //StaticSamplers.size(),
+									 //StaticSamplers.data(),
+									 1,
+									 &StaticSamplers[2],
 									 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	Microsoft::WRL::ComPtr<ID3DBlob> signature = nullptr;
@@ -647,68 +730,29 @@ void ApplicationInstance::BuildRootSignature()
 											   signature->GetBufferPointer(),
 											   signature->GetBufferSize(),
 											   IID_PPV_ARGS(mRootSignature.GetAddressOf())));
-}
 
-void ApplicationInstance::BuildPostProcessRootSignature()
-{
-	CD3DX12_DESCRIPTOR_RANGE SRV;
-	SRV.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-
-	CD3DX12_DESCRIPTOR_RANGE UAV;
-	UAV.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
-
-	CD3DX12_ROOT_PARAMETER params[3];
-	params[0].InitAsConstants(12, 0);
-	params[1].InitAsDescriptorTable(1, &SRV);
-	params[2].InitAsDescriptorTable(1, &UAV);
-
-	auto StaticSamplers = GetStaticSamplers();
-
-	CD3DX12_ROOT_SIGNATURE_DESC desc(3,
-									 params,
-									 0,
-									 nullptr,
-									 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-	Microsoft::WRL::ComPtr<ID3DBlob> signature = nullptr;
-	Microsoft::WRL::ComPtr<ID3DBlob> error = nullptr;
-
-	HRESULT hr = D3D12SerializeRootSignature(&desc,
-											 D3D_ROOT_SIGNATURE_VERSION_1,
-											 signature.GetAddressOf(),
-											 error.GetAddressOf());
-
-	if (error != nullptr)
-	{
-		::OutputDebugStringA(static_cast<char*>(error->GetBufferPointer()));
-	}
-
-	ThrowIfFailed(hr);
-
-	ThrowIfFailed(mDevice->CreateRootSignature(0,
-											   signature->GetBufferPointer(),
-											   signature->GetBufferSize(),
-											   IID_PPV_ARGS(mPostProcessRootSignature.GetAddressOf())));
+	mBlur->BuildRootSignature();
+	mSobel->BuildRootSignature(GetStaticSamplers());
 }
 
 void ApplicationInstance::BuildDescriptorHeaps()
 {
-	// create SRV heap
-	{
-		D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-		desc.NumDescriptors = 7;
-		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mCBVSRVUAVDescriptorHeap.GetAddressOf())));
-	}
-
 	std::vector<std::pair<std::string, D3D12_SRV_DIMENSION>> textures =
 	{
 		{ "grass", D3D12_SRV_DIMENSION_TEXTURE2D },
 		{ "water1", D3D12_SRV_DIMENSION_TEXTURE2D },
 		{ "WireFence", D3D12_SRV_DIMENSION_TEXTURE2D },
 	};
+
+	// create SRV heap
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+		desc.NumDescriptors = textures.size() + mBlur->DescriptorCount() + mSobel->DescriptorCount() + mOffscreenRT->DescriptorCount();
+		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+		ThrowIfFailed(mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(mCBVSRVUAVDescriptorHeap.GetAddressOf())));
+	}
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE descriptor(mCBVSRVUAVDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
@@ -746,9 +790,31 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		CreateSRV(texture.first, texture.second);
 	}
 
-	mBlur->BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE(mCBVSRVUAVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), 3, mCBVSRVUAVDescriptorSize),
-							CD3DX12_GPU_DESCRIPTOR_HANDLE(mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), 3, mCBVSRVUAVDescriptorSize),
+	auto SrvCpuStart = mCBVSRVUAVDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	auto SrvGpuStart = mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	auto RtvCpuStart = mRTVHeap->GetCPUDescriptorHandleForHeapStart();
+
+	INT SrvCpuOffset = textures.size();
+	INT SrvGpuOffset = textures.size();
+	INT RtvCpuOffset = SwapChainBufferSize;
+
+	mBlur->BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE(SrvCpuStart, SrvCpuOffset, mCBVSRVUAVDescriptorSize),
+							CD3DX12_GPU_DESCRIPTOR_HANDLE(SrvGpuStart, SrvGpuOffset, mCBVSRVUAVDescriptorSize),
 							mCBVSRVUAVDescriptorSize);
+
+	SrvCpuOffset += mBlur->DescriptorCount();
+	SrvGpuOffset += mBlur->DescriptorCount();
+
+	mSobel->BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE(SrvCpuStart, SrvCpuOffset, mCBVSRVUAVDescriptorSize),
+							 CD3DX12_GPU_DESCRIPTOR_HANDLE(SrvGpuStart, SrvGpuOffset, mCBVSRVUAVDescriptorSize),
+							 mCBVSRVUAVDescriptorSize);
+
+	SrvCpuOffset += mSobel->DescriptorCount();
+	SrvGpuOffset += mSobel->DescriptorCount();
+
+	mOffscreenRT->BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE(SrvCpuStart, SrvCpuOffset, mCBVSRVUAVDescriptorSize),
+								   CD3DX12_GPU_DESCRIPTOR_HANDLE(SrvGpuStart, SrvGpuOffset, mCBVSRVUAVDescriptorSize),
+								   CD3DX12_CPU_DESCRIPTOR_HANDLE(RtvCpuStart, RtvCpuOffset, mRTVDescriptorSize));
 }
 
 void ApplicationInstance::BuildShadersAndInputLayout()
@@ -778,6 +844,9 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 	mShaders["AlphaTestedPS"] = Utils::CompileShader(L"shaders/default.hlsl", AlphaTestDefines, "PS", "ps_5_0");
 	mShaders["HorzBlurCS"] = Utils::CompileShader(L"shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_0");
 	mShaders["VertBlurCS"] = Utils::CompileShader(L"shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_0");
+	mShaders["SobelCS"] = Utils::CompileShader(L"shaders/sobel.hlsl", nullptr, "CS", "cs_5_0");
+	mShaders["CompositeVS"] = Utils::CompileShader(L"shaders/composite.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["CompositePS"] = Utils::CompileShader(L"shaders/composite.hlsl", nullptr, "PS", "ps_5_0");
 #endif // RENDERDOC_BUILD
 
 	mInputLayout =
@@ -1015,7 +1084,7 @@ void ApplicationInstance::BuildPipelineStateObjects()
 	// horizontal blur
 	{
 		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {};
-		desc.pRootSignature = mPostProcessRootSignature.Get();
+		desc.pRootSignature = mBlur->GetRootSignature();
 		desc.CS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["HorzBlurCS"]->GetBufferPointer());
 		desc.CS.BytecodeLength = mShaders["HorzBlurCS"]->GetBufferSize();
 		desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
@@ -1026,12 +1095,41 @@ void ApplicationInstance::BuildPipelineStateObjects()
 	// vertical blur
 	{
 		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {};
-		desc.pRootSignature = mPostProcessRootSignature.Get();
+		desc.pRootSignature = mBlur->GetRootSignature();
 		desc.CS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["VertBlurCS"]->GetBufferPointer());
 		desc.CS.BytecodeLength = mShaders["VertBlurCS"]->GetBufferSize();
 		desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 
 		ThrowIfFailed(mDevice->CreateComputePipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["vert_blur"])));
+	}
+
+	// sobel
+	{
+		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {};
+		desc.pRootSignature = mSobel->GetRootSignature();
+		desc.CS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["SobelCS"]->GetBufferPointer());
+		desc.CS.BytecodeLength = mShaders["SobelCS"]->GetBufferSize();
+		desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+		
+		ThrowIfFailed(mDevice->CreateComputePipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["sobel"])));
+	}
+
+	// composite
+	{
+		descs["composite"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["composite"];
+
+		desc.pRootSignature = mSobel->GetRootSignature();
+		// disable depth test
+		desc.DepthStencilState.DepthEnable = false;
+		desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+		desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["CompositeVS"]->GetBufferPointer());
+		desc.VS.BytecodeLength = mShaders["CompositeVS"]->GetBufferSize();
+		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["CompositePS"]->GetBufferPointer());
+		desc.PS.BytecodeLength = mShaders["CompositePS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["composite"])));
 	}
 }
 
@@ -1081,7 +1179,7 @@ void ApplicationInstance::BuildMaterials()
 		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
 		material->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 		material->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-		material->roughness = 0.2f;
+		material->roughness = 0.25f;
 
 		mMaterials[material->name] = std::move(material);
 	}
@@ -1184,6 +1282,15 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 	}
 }
 
+void ApplicationInstance::DrawFullscreenQuad(ID3D12GraphicsCommandList* CommandList)
+{
+	//CommandList->IASetVertexBuffers(0, 1, nullptr);
+	CommandList->IASetIndexBuffer(nullptr);
+	CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	CommandList->DrawInstanced(6, 1, 0, 0);
+}
+
 float ApplicationInstance::GetHillHeight(float x, float z) const
 {
 	return 0.3f * (z * std::sin(0.1f * x) + x * std::cos(0.1f * z));
@@ -1200,74 +1307,80 @@ XMFLOAT3 ApplicationInstance::GetHillNormal(float x, float z) const
 	return n;
 }
 
-std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> ApplicationInstance::GetStaticSamplers()
+std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6>& ApplicationInstance::GetStaticSamplers()
 {
-	const CD3DX12_STATIC_SAMPLER_DESC PointWrap
-	(
-		0,
-		D3D12_FILTER_MIN_MAG_MIP_POINT,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP
-	);
-
-	const CD3DX12_STATIC_SAMPLER_DESC PointClamp
-	(
-		1,
-		D3D12_FILTER_MIN_MAG_MIP_POINT,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP
-	);
-
-	const CD3DX12_STATIC_SAMPLER_DESC LinearWrap
-	(
-		2,
-		D3D12_FILTER_MIN_MAG_MIP_LINEAR,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP
-	);
-
-	const CD3DX12_STATIC_SAMPLER_DESC LinearClamp
-	(
-		3,
-		D3D12_FILTER_MIN_MAG_MIP_LINEAR,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
-
-	const CD3DX12_STATIC_SAMPLER_DESC AnisotropicWrap
-	(
-		4,
-		D3D12_FILTER_ANISOTROPIC,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-		0.0f,
-		8
-	);
-
-	const CD3DX12_STATIC_SAMPLER_DESC AnisotropicClamp
-	(
-		5,
-		D3D12_FILTER_ANISOTROPIC,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-		0.0f,
-		8
-	);
-
-	return
+	static std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> StaticSamplers = []() -> std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6>
 	{
-		PointWrap,
-		PointClamp,
-		LinearWrap,
-		LinearClamp,
-		AnisotropicWrap,
-		AnisotropicClamp
-	};
+
+		const CD3DX12_STATIC_SAMPLER_DESC PointWrap
+		(
+			0,
+			D3D12_FILTER_MIN_MAG_MIP_POINT,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP
+		);
+
+		const CD3DX12_STATIC_SAMPLER_DESC PointClamp
+		(
+			1,
+			D3D12_FILTER_MIN_MAG_MIP_POINT,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP
+		);
+
+		const CD3DX12_STATIC_SAMPLER_DESC LinearWrap
+		(
+			2,
+			D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP
+		);
+
+		const CD3DX12_STATIC_SAMPLER_DESC LinearClamp
+		(
+			3,
+			D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+
+		const CD3DX12_STATIC_SAMPLER_DESC AnisotropicWrap
+		(
+			4,
+			D3D12_FILTER_ANISOTROPIC,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+			0.0f,
+			8
+		);
+
+		const CD3DX12_STATIC_SAMPLER_DESC AnisotropicClamp
+		(
+			5,
+			D3D12_FILTER_ANISOTROPIC,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			0.0f,
+			8
+		);
+
+		return
+		{
+			PointWrap,
+			PointClamp,
+			LinearWrap,
+			LinearClamp,
+			AnisotropicWrap,
+			AnisotropicClamp
+		};
+	}();
+
+	return StaticSamplers;
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, PSTR CMD, int ShowCMD)

@@ -1,7 +1,7 @@
 #include "LightingUtils.hlsl"
 
 Texture2D gDiffuseTexture : register(t0);
-SamplerState gSamplerLinear : register(s0);
+SamplerState gSamplerLinearWrap : register(s2);
 
 cbuffer ObjectCB : register(b0)
 {
@@ -77,7 +77,7 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
-	float4 DiffuseAlbedo = gDiffuseTexture.Sample(gSamplerLinear, pin.TexCoord) * gDiffuseAlbedo;
+	float4 DiffuseAlbedo = gDiffuseTexture.Sample(gSamplerLinearWrap, pin.TexCoord) * gDiffuseAlbedo;
 
 #if ALPHA_TEST
 	clip(DiffuseAlbedo.a - 0.1f);
