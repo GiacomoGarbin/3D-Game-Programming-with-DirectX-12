@@ -1,8 +1,5 @@
 #include "LightingUtils.hlsl"
 
-// Texture2D gDiffuseTexture : register(t0);
-// SamplerState gSamplerLinearWrap : register(s2);
-
 cbuffer ObjectCB : register(b0)
 {
 	float4x4 gWorld;
@@ -69,18 +66,11 @@ struct PatchTess
 	float InsideTessFactor[2] : SV_InsideTessFactor;
 };
 
-PatchTess ConstantHS(InputPatch<VertexOut, 4> patch, const uint PatchID : SV_PrimitiveID)
+PatchTess ConstantHS(InputPatch<VertexOut, 16> patch, const uint PatchID : SV_PrimitiveID)
 {
 	PatchTess pt;
-	
-	const float3 centerL = 0.25f * (patch[0].PositionL + patch[1].PositionL + patch[2].PositionL + patch[3].PositionL);
-	const float3 centerW = mul(float4(centerL, 1.0f), gWorld).xyz;
-	
-	const float dx = distance(centerW, gEyePositionW);
 
-	const float d0 = 20.0f;
-	const float d1 = 100.0f;
-	const float TessFactor = 64.0f * saturate((d1-dx)/(d1-d0));
+	const float TessFactor = 25.0f;
 
 	pt.EdgeTessFactor[0] = TessFactor;
 	pt.EdgeTessFactor[1] = TessFactor;
@@ -101,12 +91,12 @@ struct HullOut
 [domain("quad")]
 [partitioning("integer")]
 [outputtopology("triangle_cw")]
-[outputcontrolpoints(4)]
+[outputcontrolpoints(16)]
 [patchconstantfunc("ConstantHS")]
 [maxtessfactor(64.0f)]
-HullOut HS(InputPatch<VertexOut, 4> pt, 
+HullOut HS(InputPatch<VertexOut, 16> pt, 
            const uint i : SV_OutputControlPointID,
-           const uint PatchId : SV_PrimitiveID)
+           const uint PatchID : SV_PrimitiveID)
 {
 	HullOut hout;
 	
@@ -120,23 +110,54 @@ struct DomainOut
 	float4 PositionH : SV_POSITION;
 };
 
+float4 BernsteinBasis(const float t)
+{
+    const float T = 1.0f - t;
+	const float t2 = t * t;
+	const float T2 = T * T;
+
+    return float4(T2 * T,
+                  3.0f * t * T2,
+                  3.0f * t2 * T,
+                  t2 * t);
+}
+
+float4 dBernsteinBasis(const float t)
+{
+    const float T = 1.0f - t;
+	const float t2 = t * t;
+	const float T2 = T * T;
+
+    return float4(-3 * T2,
+                  +3 * T2 - 6 * t * T,
+                  +6 * t * T - 3 * t2,
+                  +3 * t2);
+}
+
+float3 CubicBezierSum(const OutputPatch<HullOut, 16> patch, const float4 u, const float4 v)
+{
+    float3 sum = float3(0.0f, 0.0f, 0.0f);
+    sum  =  v.x * (u.x*patch[0x0].PositionL + u.y*patch[0x1].PositionL + u.z*patch[0x2].PositionL + u.w*patch[0x3].PositionL);
+    sum +=  v.y * (u.x*patch[0x4].PositionL + u.y*patch[0x5].PositionL + u.z*patch[0x6].PositionL + u.w*patch[0x7].PositionL);
+    sum +=  v.z * (u.x*patch[0x8].PositionL + u.y*patch[0x9].PositionL + u.z*patch[0xa].PositionL + u.w*patch[0xb].PositionL);
+    sum +=  v.w * (u.x*patch[0xc].PositionL + u.y*patch[0xd].PositionL + u.z*patch[0xe].PositionL + u.w*patch[0xf].PositionL);
+    return sum;
+}
+
 [domain("quad")]
 DomainOut DS(PatchTess pt, 
              const float2 uv : SV_DomainLocation, 
-             const OutputPatch<HullOut, 4> quad)
+             const OutputPatch<HullOut, 16> patch)
 {
 	DomainOut dout;
 	
-	// bilinear interpolation
-	const float3 v1 = lerp(quad[0].PositionL, quad[1].PositionL, uv.x); 
-	const float3 v2 = lerp(quad[2].PositionL, quad[3].PositionL, uv.x); 
-	float3 position  = lerp(v1, v2, uv.y); 
+	const float4 u = BernsteinBasis(uv.x);
+	const float4 v = BernsteinBasis(uv.y);	
 	
-	// displacement mapping
-	position.y = 0.3f * (position.z * sin(position.x) + position.x * cos(position.z));
-	
-	const float4 PositionH = mul(float4(position, 1.0f), gWorld);
-	dout.PositionH = mul(PositionH, gViewProj);
+	const float3 position = CubicBezierSum(patch, u, v);
+
+	const float4 PositionW = mul(float4(position, 1.0f), gWorld);
+	dout.PositionH = mul(PositionW, gViewProj);
 	
 	return dout;
 }

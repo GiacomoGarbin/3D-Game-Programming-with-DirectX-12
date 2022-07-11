@@ -31,7 +31,6 @@ struct RenderItem
 enum class RenderLayer : int
 {
 	opaque = 0,
-
 	count
 };
 
@@ -72,7 +71,7 @@ class ApplicationInstance : public ApplicationFramework
 	float mCameraPhi = 0.42f * XM_PI;
 	float mCameraRadius = 12.0f;
 
-	POINT mLastMousePosition;
+	POINT mLastMousePosition = { 0, 0 };
 
 	virtual void CreateRTVAndDSVDescriptorHeaps() override;
 
@@ -90,10 +89,9 @@ class ApplicationInstance : public ApplicationFramework
 	void UpdateObjectCBs(const GameTimer& timer);
 	void UpdateMaterialCBs(const GameTimer& timer);
 	void UpdateMainPassCB(const GameTimer& timer);
-	void UpdateWaves(const GameTimer& timer);
 
-	void BuildDescriptorHeaps();
 	void BuildRootSignatures();
+	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
 	void BuildQuadPatchGeometry();
 	void BuildPipelineStateObjects();
@@ -104,7 +102,8 @@ class ApplicationInstance : public ApplicationFramework
 	void LoadTextures();
 	const std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6>& GetStaticSamplers();
 
-	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems);
+	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList,
+						 const std::vector<RenderItem*>& RenderItems);
 
 public:
 	ApplicationInstance(HINSTANCE instance);
@@ -138,7 +137,6 @@ bool ApplicationInstance::init()
 
 	LoadTextures();
 	BuildRootSignatures();
-	//BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
 	BuildQuadPatchGeometry();
 	BuildMaterials();
@@ -641,15 +639,40 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 
 void ApplicationInstance::BuildQuadPatchGeometry()
 {
-	const std::array<XMFLOAT3, 4> vertices =
+	const std::array<XMFLOAT3, 16> vertices =
 	{
-		XMFLOAT3(-10.0f, 0.0f, +10.0f),
-		XMFLOAT3(+10.0f, 0.0f, +10.0f),
-		XMFLOAT3(-10.0f, 0.0f, -10.0f),
-		XMFLOAT3(+10.0f, 0.0f, -10.0f)
+		// row 0
+		XMFLOAT3(-10.0f, -10.0f, +15.0f),
+		XMFLOAT3(-05.0f, +00.0f, +15.0f),
+		XMFLOAT3(+05.0f, +00.0f, +15.0f),
+		XMFLOAT3(+10.0f, +00.0f, +15.0f),
+
+		// row 1
+		XMFLOAT3(-15.0f, +00.0f, +05.0f),
+		XMFLOAT3(-05.0f, +00.0f, +05.0f),
+		XMFLOAT3(+05.0f, +20.0f, +05.0f),
+		XMFLOAT3(+15.0f, +00.0f, +05.0f),
+
+		// row 2
+		XMFLOAT3(-15.0f, +00.0f, -05.0f),
+		XMFLOAT3(-05.0f, +00.0f, -05.0f),
+		XMFLOAT3(+05.0f, +00.0f, -05.0f),
+		XMFLOAT3(+15.0f, +00.0f, -05.0f),
+
+		// row 3
+		XMFLOAT3(-10.0f, +10.0f, -15.0f),
+		XMFLOAT3(-05.0f, +00.0f, -15.0f),
+		XMFLOAT3(+05.0f, +00.0f, -15.0f),
+		XMFLOAT3(+25.0f, +10.0f, -15.0f)
 	};
 
-	const std::array<uint16_t, 4> indices = { 0, 1, 2, 3 };
+	const std::array<uint16_t, 16> indices =
+	{
+		0x0, 0x1, 0x2, 0x3,
+		0x4, 0x5, 0x6, 0x7,
+		0x8, 0x9, 0xa, 0xb,
+		0xc, 0xd, 0xe, 0xf
+	};
 
 	const UINT VertexBufferByteSize = vertices.size() * sizeof(XMFLOAT3);
 	const UINT IndexBufferByteSize = indices.size() * sizeof(uint16_t);
@@ -777,7 +800,7 @@ void ApplicationInstance::BuildRenderItems()
 		item->ConstantBufferIndex = ObjectCBIndex++;
 		item->geometry = mMeshGeometries["QuadPatch"].get();
 		item->material = mMaterials["white"].get();
-		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST;
+		item->PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_16_CONTROL_POINT_PATCHLIST;
 		item->IndexCount = item->geometry->DrawArgs["QuadPatch"].IndexCount;
 		item->StartIndexLocation = item->geometry->DrawArgs["QuadPatch"].StartIndexLocation;
 		item->BaseVertexLocation = item->geometry->DrawArgs["QuadPatch"].BaseVertexLocation;
