@@ -149,6 +149,7 @@
     <ClCompile Include="..\..\imgui\imgui_tables.cpp" />
     <ClCompile Include="..\..\imgui\imgui_widgets.cpp" />
     <ClCompile Include="..\common\ApplicationFramework.cpp" />
+    <ClCompile Include="..\common\camera.cpp" />
     <ClCompile Include="..\common\DDSTextureLoader.cpp" />
     <ClCompile Include="..\common\GameTimer.cpp" />
     <ClCompile Include="..\common\GeometryGenerator.cpp" />
@@ -163,6 +164,7 @@
     <ClInclude Include="..\..\imgui\imgui.h" />
     <ClInclude Include="..\..\imgui\imgui_internal.h" />
     <ClInclude Include="..\common\ApplicationFramework.h" />
+    <ClInclude Include="..\common\camera.h" />
     <ClInclude Include="..\common\d3dx12.h" />
     <ClInclude Include="..\common\DDSTextureLoader.h" />
     <ClInclude Include="..\common\GameTimer.h" />

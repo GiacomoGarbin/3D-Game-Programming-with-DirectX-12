@@ -9,7 +9,7 @@ FrameResource::FrameResource(ID3D12Device* device,
 												 IID_PPV_ARGS(CommandAllocator.GetAddressOf())));
 
 	MainPassCB = std::make_unique<UploadBuffer<MainPassConstants>>(device, MainPassCount, true);
-	MaterialCB = std::make_unique<UploadBuffer<MaterialConstants>>(device, MaterialCount, true);
+	MaterialBuffer = std::make_unique<UploadBuffer<MaterialData>>(device, MaterialCount, false);
 	ObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(device, ObjectCount, true);
 }
 

@@ -16,6 +16,8 @@ struct ObjectConstants
 {
 	XMFLOAT4X4 world = MathHelper::Identity4x4();
 	XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
+	UINT MaterialIndex = -1;
+	XMFLOAT3 padding;
 };
 
 struct MainPassConstants
@@ -37,12 +39,25 @@ struct MainPassConstants
 
 	XMFLOAT4 AmbientLight = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
 
-	XMFLOAT4 FogColor = { 0.7f, 0.7f, 0.7f, 1.0f };
-	float FogStart = 5.0f;
-	float FogRange = 150.0f;
-	XMFLOAT2 padding2;
+	//XMFLOAT4 FogColor = { 0.7f, 0.7f, 0.7f, 1.0f };
+	//float FogStart = 5.0f;
+	//float FogRange = 150.0f;
+	//XMFLOAT2 padding2;
 
 	Light lights[LIGHT_MAX_COUNT];
+};
+
+struct MaterialData
+{
+	XMFLOAT4 DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
+	float roughness = 64.0f;
+
+	// used in texture mapping
+	XMFLOAT4X4 transform = MathHelper::Identity4x4();
+
+	UINT DiffuseTextureIndex = 0;
+	XMFLOAT3 padding;
 };
 
 struct FrameResource
@@ -53,7 +68,7 @@ struct FrameResource
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;
 
 	std::unique_ptr<UploadBuffer<MainPassConstants>> MainPassCB = nullptr;
-	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
+	std::unique_ptr<UploadBuffer<MaterialData>> MaterialBuffer = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	UINT64 fence = 0;
