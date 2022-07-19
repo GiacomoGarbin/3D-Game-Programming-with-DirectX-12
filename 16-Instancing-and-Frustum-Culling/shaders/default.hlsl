@@ -1,5 +1,13 @@
 #include "LightingUtils.hlsl"
 
+struct InstanceData
+{
+	float4x4 world;
+	float4x4 TexCoordTransform;
+	uint MaterialIndex;
+	float3 padding;
+};
+
 struct MaterialData
 {
 	float4 DiffuseAlbedo;
@@ -11,20 +19,15 @@ struct MaterialData
 };
 
 // array of textures
-Texture2D gDiffuseTexture[4] : register(t0, space0);
+Texture2D gDiffuseTexture[7] : register(t0, space0);
+// instance buffer, it contains all visible instances
+StructuredBuffer<InstanceData> gInstanceBuffer : register(t0, space1);
 // material buffer, it contains all materials
-StructuredBuffer<MaterialData> gMaterialBuffer : register(t0, space1);
+StructuredBuffer<MaterialData> gMaterialBuffer : register(t1, space1);
+
 SamplerState gSamplerLinearWrap : register(s2);
 
-cbuffer ObjectCB : register(b0)
-{
-	float4x4 gWorld;
-	float4x4 gTexCoordTransform;
-	uint gMaterialIndex;
-	float3 padding;
-};
-
-cbuffer MainPassCB : register(b1)
+cbuffer MainPassCB : register(b0)
 {
 	float4x4 gView;
 	float4x4 gViewInverse;
@@ -66,29 +69,34 @@ struct VertexOut
 	float3 PositionW : POSITION;
 	float3 NormalW : NORMAL;
 	float2 TexCoord : TEXCOORD;
+
+	nointerpolation uint MaterialIndex : MATERIAL_INDEX;
 };
 
-VertexOut VS(const VertexIn vin)
+VertexOut VS(const VertexIn vin, const uint InstanceID : SV_InstanceID)
 {
 	VertexOut vout;
 
-	const MaterialData material = gMaterialBuffer[gMaterialIndex];
+	const InstanceData instance = gInstanceBuffer[InstanceID];
+	const MaterialData material = gMaterialBuffer[instance.MaterialIndex];
 
-	const float4 PositionW = mul(float4(vin.PositionL, 1.0f), gWorld);
+	const float4 PositionW = mul(float4(vin.PositionL, 1.0f), instance.world);
 	vout.PositionW = PositionW.xyz;
 	vout.PositionH = mul(PositionW, gViewProj);
 
-	vout.NormalW = mul(vin.NormalL, (float3x3)(gWorld));
+	vout.NormalW = mul(vin.NormalL, (float3x3)(instance.world));
 
-	const float4 TexCoord = mul(float4(vin.TexCoord, 0.0f, 1.0f), gTexCoordTransform);
+	const float4 TexCoord = mul(float4(vin.TexCoord, 0.0f, 1.0f), instance.TexCoordTransform);
 	vout.TexCoord = mul(TexCoord, material.transform).xy;
+
+	vout.MaterialIndex = instance.MaterialIndex;
 
 	return vout;
 }
 
 float4 PS(const VertexOut pin) : SV_Target
 {
-	const MaterialData material = gMaterialBuffer[gMaterialIndex];
+	const MaterialData material = gMaterialBuffer[pin.MaterialIndex];
 
 	const float4 DiffuseAlbedo = gDiffuseTexture[material.DiffuseTextureIndex].Sample(gSamplerLinearWrap, pin.TexCoord) * material.DiffuseAlbedo;
 
@@ -108,7 +116,7 @@ float4 PS(const VertexOut pin) : SV_Target
 	// direct lighting
 	const float shininess = 1.0f - material.roughness;
 	const Material LightMaterial = { DiffuseAlbedo, material.FresnelR0, shininess };
-	float3 ShadowFactor = 1.0f;
+	const float3 ShadowFactor = 1.0f;
 	const float4 direct = ComputeLighting(gLights, LightMaterial, pin.PositionW, normal, ToEyeW, ShadowFactor);
 	
 	float4 result = ambient + direct;

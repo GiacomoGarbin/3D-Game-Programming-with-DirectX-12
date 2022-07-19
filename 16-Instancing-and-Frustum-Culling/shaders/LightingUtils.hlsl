@@ -1,7 +1,7 @@
 #define LIGHT_MAX_COUNT 16
 
 #ifndef LIGHT_DIR_COUNT
-    #define LIGHT_DIR_COUNT 1
+    #define LIGHT_DIR_COUNT 3
 #endif
 
 #ifndef LIGHT_POINT_COUNT

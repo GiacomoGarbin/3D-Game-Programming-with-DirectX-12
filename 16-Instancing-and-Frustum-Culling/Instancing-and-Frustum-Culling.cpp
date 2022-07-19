@@ -5,6 +5,8 @@
 #include "camera.h"
 
 #include <numeric>
+#include <sstream>
+#include <fstream>
 
 #define RENDERDOC_BUILD 0
 
@@ -26,7 +28,11 @@ struct RenderItem
 
 	D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
+	BoundingBox bounds;
+	std::vector<InstanceData> instances;
+
 	UINT IndexCount = 0;
+	UINT InstanceCount = 0;
 	UINT StartIndexLocation = 0;
 	int BaseVertexLocation = 0;
 };
@@ -60,10 +66,14 @@ class ApplicationInstance : public ApplicationFramework
 	std::vector<std::unique_ptr<RenderItem>> mRenderItems;
 	std::vector<RenderItem*> mLayerRenderItems[static_cast<int>(RenderLayer::count)];
 
+	UINT mInstanceCount = 0;
+
 	MainPassConstants mMainPassCB;
 	//UINT mMainPassCBVOffset = 0;
 
 	Camera mCamera;
+	BoundingFrustum mCameraFrustum;
+	bool mIsFrustumCullingEnabled = true;
 
 	bool mIsWireFrameEnabled = false;
 
@@ -80,16 +90,15 @@ class ApplicationInstance : public ApplicationFramework
 	virtual void OnMouseMove(WPARAM state, int x, int y) override;
 	void OnKeyboardEvent(const GameTimer& timer);
 
-	//void UpdateCamera(const GameTimer& timer);
 	void AnimateMaterials(const GameTimer& timer);
-	void UpdateObjectCBs(const GameTimer& timer);
+	void UpdateInstanceData(const GameTimer& timer);
 	void UpdateMaterialBuffer(const GameTimer& timer);
 	void UpdateMainPassCB(const GameTimer& timer);
 
 	void BuildRootSignatures();
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
-	void BuildMeshGeometry();
+	void BuildSkullGeometry();
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -137,7 +146,7 @@ bool ApplicationInstance::init()
 	BuildRootSignatures();
 	BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
-	BuildMeshGeometry();
+	BuildSkullGeometry();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -194,6 +203,7 @@ void ApplicationInstance::OnResize()
 	ApplicationFramework::OnResize();
 
 	mCamera.SetLens(0.25f * XM_PI, GetAspectRatio(), 1.0f, 1000.0f);
+	BoundingFrustum::CreateFromMatrix(mCameraFrustum, mCamera.GetProj());
 }
 
 void ApplicationInstance::update(GameTimer& timer)
@@ -212,7 +222,7 @@ void ApplicationInstance::update(GameTimer& timer)
 	}
 
 	AnimateMaterials(timer);
-	UpdateObjectCBs(timer);
+	UpdateInstanceData(timer);
 	UpdateMaterialBuffer(timer);
 	UpdateMainPassCB(timer);
 }
@@ -246,8 +256,6 @@ void ApplicationInstance::draw(GameTimer& timer)
 		ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(), mPipelineStateObjects["opaque"].Get()));
 	}
 
-	//mCommandList->SetPipelineState(mPipelineStateObjects["opaque"].Get());
-
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
@@ -276,12 +284,13 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	// bind main pass constant buffer
 	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
-	mCommandList->SetGraphicsRootConstantBufferView(1, MainPassCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(2, MainPassCB->GetGPUVirtualAddress());
 
 	// bind all materials
 	auto MaterialBuffer = mCurrentFrameResource->MaterialBuffer->GetResource();
-	mCommandList->SetGraphicsRootShaderResourceView(2, MaterialBuffer->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootShaderResourceView(1, MaterialBuffer->GetGPUVirtualAddress());
 
+	// bind all textures
 	mCommandList->SetGraphicsRootDescriptorTable(3, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
@@ -369,46 +378,71 @@ void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 		mCamera.strafe(+10.0f * dt);
 	}
 
+	if (GetAsyncKeyState('1') & 0x8000)
+	{
+		mIsFrustumCullingEnabled = true;
+	}
+
+	if (GetAsyncKeyState('2') & 0x8000)
+	{
+		mIsFrustumCullingEnabled = false;
+	}
+
 	mCamera.UpdateViewMatrix();
 }
-
-//void ApplicationInstance::UpdateCamera(const GameTimer& timer)
-//{
-//	mEyePosition.x = mCameraRadius * std::sin(mCameraPhi) * std::cos(mCameraTheta);
-//	mEyePosition.z = mCameraRadius * std::sin(mCameraPhi) * std::sin(mCameraTheta);
-//	mEyePosition.y = mCameraRadius * std::cos(mCameraPhi);
-//
-//	XMVECTOR eye = XMVectorSet(mEyePosition.x, mEyePosition.y, mEyePosition.z, 1.0f);
-//	XMVECTOR target = XMVectorZero();
-//	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-//
-//	XMMATRIX view = XMMatrixLookAtLH(eye, target, up);
-//	XMStoreFloat4x4(&mView, view);
-//}
 
 void ApplicationInstance::AnimateMaterials(const GameTimer& timer)
 {}
 
-void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
+void ApplicationInstance::UpdateInstanceData(const GameTimer& timer)
 {
-	auto CurrentObjectCB = mCurrentFrameResource->ObjectCB.get();
+	const XMMATRIX view = mCamera.GetView();
+
+	XMVECTOR determinant = XMMatrixDeterminant(view);
+	const XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
+
+	auto CurrentInstanceBuffer = mCurrentFrameResource->InstanceBuffer.get();
 
 	for (auto& object : mRenderItems)
 	{
-		if (object->DirtyFramesCount > 0)
+		UINT VisibleInstanceCount = 0;
+
+		for (const InstanceData& instance : object->instances)
 		{
-			const XMMATRIX world = XMLoadFloat4x4(&object->world);
-			const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&object->TexCoordTransform);
+			const XMMATRIX world = XMLoadFloat4x4(&instance.world);
+			const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&instance.TexCoordTransform);
 
-			ObjectConstants buffer;
-			XMStoreFloat4x4(&buffer.world, XMMatrixTranspose(world));
-			XMStoreFloat4x4(&buffer.TexCoordTransform, XMMatrixTranspose(TexCoordTransform));
-			buffer.MaterialIndex = object->material->ConstantBufferIndex;
+			XMVECTOR determinant = XMMatrixDeterminant(world);
+			const XMMATRIX WorldInverse = XMMatrixInverse(&determinant, world);
 
-			CurrentObjectCB->CopyData(object->ConstantBufferIndex, buffer);
+			// view space to the object's local space
+			const XMMATRIX ViewToLocal = XMMatrixMultiply(ViewInverse, WorldInverse);
 
-			(object->DirtyFramesCount)--;
+			// transform the camera frustum from view space to the object's local space
+			BoundingFrustum LocalSpaceFrustum;
+			mCameraFrustum.Transform(LocalSpaceFrustum, ViewToLocal);
+
+			// box-frustum intersection test in local space
+			if ((LocalSpaceFrustum.Contains(object->bounds) != DirectX::DISJOINT) || (mIsFrustumCullingEnabled == false))
+			{
+				InstanceData data;
+				XMStoreFloat4x4(&data.world, XMMatrixTranspose(world));
+				XMStoreFloat4x4(&data.TexCoordTransform, XMMatrixTranspose(TexCoordTransform));
+				data.MaterialIndex = instance.MaterialIndex;
+
+				// write the instance data to structured buffer for the visible objects
+				CurrentInstanceBuffer->CopyData(VisibleInstanceCount++, data);
+			}
 		}
+
+		object->InstanceCount = VisibleInstanceCount;
+
+		std::wostringstream stream;
+		stream.precision(6);
+		stream <<	L"Instancing and Frustum Culling" <<
+					L"    " << object->InstanceCount <<
+					L" objects visible out of " << object->instances.size();
+		mMainWindowTitle = stream.str();
 	}
 }
 
@@ -440,10 +474,10 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 {
 	XMVECTOR determinant;
 
-	XMMATRIX view = mCamera.GetView(); // XMLoadFloat4x4(&mView);
+	XMMATRIX view = mCamera.GetView();
 	determinant = XMMatrixDeterminant(view);
 	XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
-	XMMATRIX proj = mCamera.GetProj(); // XMLoadFloat4x4(&mProj);
+	XMMATRIX proj = mCamera.GetProj();
 	determinant = XMMatrixDeterminant(proj);
 	XMMATRIX ProjInverse = XMMatrixInverse(&determinant, proj);
 	XMMATRIX ViewProj = view * proj;
@@ -501,12 +535,15 @@ void ApplicationInstance::LoadTextures()
 		mTextures[texture->name] = std::move(texture);
 	};
 
-	const std::array<const std::string, 4> textures =
+	const std::array<const std::string, 7> textures =
 	{
 		"bricks",
 		"stone",
 		"tile",
-		"WoodCrate01"
+		"WoodCrate01",
+		"ice",
+		"grass",
+		"white1x1"
 	};
 
 	for (const std::string& texture : textures)
@@ -518,17 +555,17 @@ void ApplicationInstance::LoadTextures()
 void ApplicationInstance::BuildRootSignatures()
 {
 	CD3DX12_DESCRIPTOR_RANGE TextureTable;
-	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0);
+	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, mTextures.size(), 0, 0);
 
 	CD3DX12_ROOT_PARAMETER params[4];
-	params[0].InitAsConstantBufferView(0);
-	params[1].InitAsConstantBufferView(1);
-	params[2].InitAsShaderResourceView(0, 1);
+	params[0].InitAsShaderResourceView(0, 1);
+	params[1].InitAsShaderResourceView(1, 1);
+	params[2].InitAsConstantBufferView(0);
 	params[3].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	auto StaticSamplers = GetStaticSamplers();
 
-	CD3DX12_ROOT_SIGNATURE_DESC desc(4,
+	CD3DX12_ROOT_SIGNATURE_DESC desc(sizeof(params) / sizeof(CD3DX12_ROOT_PARAMETER),
 									 params,
 									 //StaticSamplers.size(),
 									 //StaticSamplers.data(),
@@ -559,18 +596,10 @@ void ApplicationInstance::BuildRootSignatures()
 
 void ApplicationInstance::BuildDescriptorHeaps()
 {
-	const std::array<const std::string, 4> textures =
-	{
-		"bricks",
-		"stone",
-		"tile",
-		"WoodCrate01"
-	};
-
 	// create SRV heap
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-		desc.NumDescriptors = textures.size();
+		desc.NumDescriptors = mTextures.size();
 		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
@@ -579,11 +608,9 @@ void ApplicationInstance::BuildDescriptorHeaps()
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE descriptor(mCBVSRVUAVDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	auto CreateSRV = [&](const std::string& name,
+	auto CreateSRV = [&](const Microsoft::WRL::ComPtr<ID3D12Resource>& texture,
 						 const D3D12_SRV_DIMENSION dimension = D3D12_SRV_DIMENSION_TEXTURE2D)
 	{
-		const auto& texture = mTextures[name]->resource;
-
 		D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
 		desc.Format = texture->GetDesc().Format;
 		desc.ViewDimension = dimension;
@@ -609,9 +636,9 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		descriptor.Offset(1, mCBVSRVUAVDescriptorSize);
 	};
 
-	for (const std::string& texture : textures)
+	for (const auto& [name, texture] : mTextures)
 	{
-		CreateSRV(texture);
+		CreateSRV(texture->resource);
 	}
 }
 
@@ -633,52 +660,84 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 	};
 }
 
-void ApplicationInstance::BuildMeshGeometry()
+void ApplicationInstance::BuildSkullGeometry()
 {
-	GeometryGenerator generator;
+	std::ifstream stream("../models/skull.txt");
 
-	using NamedMesh = std::pair<const std::string, GeometryGenerator::MeshData>;
-
-	std::array<NamedMesh, 4> meshes =
+	if (!stream)
 	{
-		NamedMesh("box", generator.CreateBox(1.0f, 1.0f, 1.0f, 3)),
-		NamedMesh("grid", generator.CreateGrid(20.0f, 30.0f, 60, 40)),
-		NamedMesh("sphere", generator.CreateSphere(0.5f, 20, 20)),
-		NamedMesh("cylinder", generator.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20))
-	};
+		MessageBox(0, L"models/skull.txt not found", 0, 0);
+		return;
+	}
 
-	const auto lambda = [](UINT sum, const NamedMesh& mesh)
+	UINT VertexCount = 0;
+	UINT TriangleCount = 0;
+	std::string ignore;
+
+	stream >> ignore >> VertexCount;
+	stream >> ignore >> TriangleCount;
+	stream >> ignore >> ignore >> ignore >> ignore;
+
+	const XMFLOAT3 vMinf3(+MathHelper::infinity, +MathHelper::infinity, +MathHelper::infinity);
+	const XMFLOAT3 vMaxf3(-MathHelper::infinity, -MathHelper::infinity, -MathHelper::infinity);
+
+	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
+	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
+
+	std::vector<Vertex> vertices(VertexCount);
+
+	for (UINT i = 0; i < VertexCount; ++i)
 	{
-		return sum + mesh.second.vertices.size();
-	};
+		stream >> vertices[i].position.x >> vertices[i].position.y >> vertices[i].position.z;
+		stream >> vertices[i].normal.x >> vertices[i].normal.y >> vertices[i].normal.z;
 
-	const UINT TotalVertexCount = std::accumulate(meshes.begin(), meshes.end(), 0, lambda);
-	std::vector<Vertex> vertices(TotalVertexCount);
+		const XMVECTOR P = XMLoadFloat3(&vertices[i].position);
 
-	for (auto iter = vertices.begin(); const auto& [name, mesh] : meshes)
-	{
-		for (const GeometryGenerator::VertexData& vertex : mesh.vertices)
+		// project point onto unit sphere and generate spherical texture coordinates
+		XMFLOAT3 spherePos;
+		XMStoreFloat3(&spherePos, XMVector3Normalize(P));
+
+		float theta = atan2f(spherePos.z, spherePos.x);
+
+		// put in [0, 2pi]
+		if (theta < 0.0f)
 		{
-			iter->position = vertex.position;
-			iter->normal = vertex.normal;
-			iter->TexCoord = vertex.TexCoord;
-
-			iter++;
+			theta += XM_2PI;
 		}
+
+		const float phi = acosf(spherePos.y);
+
+		const float u = theta / (2.0f * XM_PI);
+		const float v = phi / XM_PI;
+
+		vertices[i].TexCoord = { u, v };
+
+		vMin = XMVectorMin(vMin, P);
+		vMax = XMVectorMax(vMax, P);
 	}
 
-	std::vector<uint16_t> indices;
+	BoundingBox bounds;
+	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
+	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
 
-	for (auto& [name, mesh] : meshes)
+	stream >> ignore;
+	stream >> ignore;
+	stream >> ignore;
+
+	std::vector<std::int32_t> indices(3 * TriangleCount);
+
+	for (UINT i = 0; i < TriangleCount; ++i)
 	{
-		indices.insert(indices.end(), mesh.GetIndices16().begin(), mesh.GetIndices16().end());
+		stream >> indices[i * 3 + 0] >> indices[i * 3 + 1] >> indices[i * 3 + 2];
 	}
+
+	stream.close();
 
 	const UINT VertexBufferByteSize = vertices.size() * sizeof(Vertex);
-	const UINT IndexBufferByteSize = indices.size() * sizeof(uint16_t);
+	const UINT IndexBufferByteSize = indices.size() * sizeof(uint32_t);
 
 	auto geometry = std::make_unique<MeshGeometry>();
-	geometry->name = "meshes";
+	geometry->name = "skull";
 
 	ThrowIfFailed(D3DCreateBlob(VertexBufferByteSize, &geometry->VertexBufferCPU));
 	CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), VertexBufferByteSize);
@@ -700,31 +759,16 @@ void ApplicationInstance::BuildMeshGeometry()
 
 	geometry->VertexByteStride = sizeof(Vertex);
 	geometry->VertexBufferByteSize = VertexBufferByteSize;
-	geometry->IndexFormat = DXGI_FORMAT_R16_UINT;
+	geometry->IndexFormat = DXGI_FORMAT_R32_UINT;
 	geometry->IndexBufferByteSize = IndexBufferByteSize;
 
-	UINT SubMeshVertexOffset = 0;
-	UINT SubMeshIndexOffset = 0;
+	SubMeshGeometry SubMesh;
+	SubMesh.IndexCount = indices.size();
+	SubMesh.StartIndexLocation = 0;
+	SubMesh.BaseVertexLocation = 0;
+	SubMesh.BoundingBox = bounds;
 
-	for (auto i = meshes.begin(); i != meshes.end(); ++i)
-	{
-		if (i != meshes.begin())
-		{
-			const GeometryGenerator::MeshData& PrevMesh = std::prev(i)->second;
-
-			SubMeshVertexOffset += PrevMesh.vertices.size();
-			SubMeshIndexOffset += PrevMesh.indices32.size();
-		}
-
-		const auto& [name, mesh] = *i;
-
-		SubMeshGeometry SubMesh;
-		SubMesh.IndexCount = mesh.indices32.size();
-		SubMesh.StartIndexLocation = SubMeshIndexOffset;
-		SubMesh.BaseVertexLocation = SubMeshVertexOffset;
-
-		geometry->DrawArgs[name] = SubMesh;
-	}
+	geometry->DrawArgs[geometry->name] = SubMesh;
 
 	mMeshGeometries[geometry->name] = std::move(geometry);
 }
@@ -776,7 +820,7 @@ void ApplicationInstance::BuildFrameResources()
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(mDevice.Get(),
 																  1,
-																  mRenderItems.size(),
+																  mInstanceCount,
 																  mMaterials.size()));
 	}
 }
@@ -785,12 +829,15 @@ void ApplicationInstance::BuildMaterials()
 {
 	using MaterialInfo = const std::tuple<const std::string, const XMFLOAT4, const XMFLOAT3, const float>;
 
-	const std::array<MaterialInfo, 4> materials =
+	const std::array<MaterialInfo, 7> materials =
 	{
 		MaterialInfo("bricks", XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.1f),
 		MaterialInfo("stone",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f),
 		MaterialInfo("tile",   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.3f),
-		MaterialInfo("crate",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.2f)
+		MaterialInfo("crate",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.2f),
+		MaterialInfo("ice",    XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 0.0f),
+		MaterialInfo("grass",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.2f),
+		MaterialInfo("skull",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.5f)
 	};
 
 	UINT ConstantBufferIndex = 0;
@@ -811,66 +858,55 @@ void ApplicationInstance::BuildMaterials()
 
 void ApplicationInstance::BuildRenderItems()
 {
-	UINT ObjectCBIndex = 0;
+	auto item = std::make_unique<RenderItem>();
 
-	// mesh, material, world, texcoordtransform
-	using data = std::tuple<const std::string, const std::string, const XMMATRIX, const XMMATRIX>;
+	item->world = MathHelper::Identity4x4();
+	item->TexCoordTransform = MathHelper::Identity4x4();
+	item->ConstantBufferIndex = 0;
+	item->geometry = mMeshGeometries["skull"].get();
+	item->material = mMaterials["skull"].get();
+	item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	item->InstanceCount = 0;
+	item->IndexCount = item->geometry->DrawArgs["skull"].IndexCount;
+	item->StartIndexLocation = item->geometry->DrawArgs["skull"].StartIndexLocation;
+	item->BaseVertexLocation = item->geometry->DrawArgs["skull"].BaseVertexLocation;
+	item->bounds = item->geometry->DrawArgs["skull"].BoundingBox;
 
-	std::vector<data> items =
+	const UINT n = 5;
+	mInstanceCount = n * n * n;
+	item->instances.resize(mInstanceCount);
+
+	const float width = 200.0f;
+	const float height = 200.0f;
+	const float depth = 200.0f;
+
+	const float x = -0.5f * width;
+	const float y = -0.5f * height;
+	const float z = -0.5f * depth;
+	const float dx = width / (n - 1);
+	const float dy = height / (n - 1);
+	const float dz = depth / (n - 1);
+	
+	for (UINT k = 0; k < n; ++k)
 	{
-		data("box", "crate", XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f), XMMatrixScaling(1.0f, 1.0f, 1.0f)),
-		data("grid", "tile", XMMatrixIdentity(), XMMatrixScaling(8.0f, 8.0f, 1.0f))
-	};
-
-	for (UINT i = 0; i < 5; ++i)
-	{
-		XMMATRIX leftCylWorld = XMMatrixTranslation(-5.0f, 1.5f, -10.0f + i * 5.0f);
-		XMMATRIX rightCylWorld = XMMatrixTranslation(+5.0f, 1.5f, -10.0f + i * 5.0f);
-
-		XMMATRIX leftSphereWorld = XMMatrixTranslation(-5.0f, 3.5f, -10.0f + i * 5.0f);
-		XMMATRIX rightSphereWorld = XMMatrixTranslation(+5.0f, 3.5f, -10.0f + i * 5.0f);
-
-
-		data leftCyl("cylinder", "bricks", leftCylWorld, XMMatrixIdentity());
-		data rightCyl("cylinder", "bricks", rightCylWorld, XMMatrixIdentity());
-
-		data leftSphere("sphere", "stone", leftSphereWorld, XMMatrixIdentity());
-		data rightSphere("sphere", "stone", rightSphereWorld, XMMatrixIdentity());
-
-		items.push_back(leftCyl);
-		items.push_back(rightCyl);
-		items.push_back(leftSphere);
-		items.push_back(rightSphere);
+		for (UINT i = 0; i < n; ++i)
+		{
+			for (UINT j = 0; j < n; ++j)
+			{
+				const UINT index = k * n * n + i * n + j;
+				XMStoreFloat4x4(&item->instances[index].world, XMMatrixTranslation(x + j * dx, y + i * dy, z + k * dz));
+				XMStoreFloat4x4(&item->instances[index].TexCoordTransform, XMMatrixScaling(2.0f, 2.0f, 1.0f));
+				item->instances[index].MaterialIndex = index % mMaterials.size();
+			}
+		}
 	}
 
-	for (const auto& [mesh, material, world, TexCoordTransform] : items)
-	{
-		auto item = std::make_unique<RenderItem>();
-
-		XMStoreFloat4x4(&item->world, world);
-		XMStoreFloat4x4(&item->TexCoordTransform, TexCoordTransform);
-		item->ConstantBufferIndex = ObjectCBIndex++;
-		item->geometry = mMeshGeometries["meshes"].get();
-		item->material = mMaterials[material].get();
-		item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		item->IndexCount = item->geometry->DrawArgs[mesh].IndexCount;
-		item->StartIndexLocation = item->geometry->DrawArgs[mesh].StartIndexLocation;
-		item->BaseVertexLocation = item->geometry->DrawArgs[mesh].BaseVertexLocation;
-
-		mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
-
-		mRenderItems.push_back(std::move(item));
-	}
+	mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
+	mRenderItems.push_back(std::move(item));
 }
 
 void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems)
 {
-	const UINT ObjectCBByteSize = Utils::GetConstantBufferByteSize(sizeof(ObjectConstants));
-	const auto ObjectCB = mCurrentFrameResource->ObjectCB->GetResource();
-
-	//const UINT MaterialCBByteSize = Utils::GetConstantBufferByteSize(sizeof(MaterialConstants));
-	//const auto MaterialCB = mCurrentFrameResource->MaterialCB->GetResource();
-
 	for (const auto& item : RenderItems)
 	{
 		const D3D12_VERTEX_BUFFER_VIEW& VertexBufferView = item->geometry->GetVertexBufferView();
@@ -880,11 +916,15 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 
 		CommandList->IASetPrimitiveTopology(item->PrimitiveTopology);
 
-		// bind object constant buffer
-		const D3D12_GPU_VIRTUAL_ADDRESS ObjectCBAddress = ObjectCB->GetGPUVirtualAddress() + item->ConstantBufferIndex * ObjectCBByteSize;
-		CommandList->SetGraphicsRootConstantBufferView(0, ObjectCBAddress);
+		// bind instance buffer
+		const auto InstanceBuffer = mCurrentFrameResource->InstanceBuffer->GetResource();
+		CommandList->SetGraphicsRootShaderResourceView(0, InstanceBuffer->GetGPUVirtualAddress());
 
-		CommandList->DrawIndexedInstanced(item->IndexCount, 1, item->StartIndexLocation, item->BaseVertexLocation, 0);
+		CommandList->DrawIndexedInstanced(item->IndexCount,
+										  item->InstanceCount,
+										  item->StartIndexLocation,
+										  item->BaseVertexLocation,
+										  0);
 	}
 }
 

@@ -12,7 +12,7 @@ struct Vertex
 	XMFLOAT2 TexCoord;
 };
 
-struct ObjectConstants
+struct InstanceData
 {
 	XMFLOAT4X4 world = MathHelper::Identity4x4();
 	XMFLOAT4X4 TexCoordTransform = MathHelper::Identity4x4();
@@ -62,14 +62,17 @@ struct MaterialData
 
 struct FrameResource
 {
-	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT ObjectCount, UINT MaterialCount);
+	FrameResource(ID3D12Device* device,
+				  const UINT MainPassCount,
+				  const UINT MaxInstanceCount,
+				  const UINT MaterialCount);
 	~FrameResource();
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;
 
 	std::unique_ptr<UploadBuffer<MainPassConstants>> MainPassCB = nullptr;
+	std::unique_ptr<UploadBuffer<InstanceData>> InstanceBuffer = nullptr;
 	std::unique_ptr<UploadBuffer<MaterialData>> MaterialBuffer = nullptr;
-	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	UINT64 fence = 0;
 };
