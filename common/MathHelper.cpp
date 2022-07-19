@@ -1,5 +1,7 @@
 #include "MathHelper.h"
 
+const float MathHelper::infinity = FLT_MAX;
+
 template<typename T>
 T MathHelper::clamp(const T& x, const T& a, const T& b)
 {

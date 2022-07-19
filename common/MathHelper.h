@@ -9,6 +9,8 @@ using namespace DirectX;
 class MathHelper
 {
 public:
+	static const float infinity;
+
 	static XMFLOAT4X4 Identity4x4()
 	{
 		static XMFLOAT4X4 I(1.0f, 0.0f, 0.0f, 0.0f,
