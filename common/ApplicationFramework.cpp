@@ -474,7 +474,7 @@ int ApplicationFramework::run()
 
 			if (!mApplicationPaused)
 			{
-				// frame stats
+				CalculateFrameStats();
 				update(mGameTimer);
 				draw(mGameTimer);
 			}
@@ -505,6 +505,31 @@ D3D12_CPU_DESCRIPTOR_HANDLE ApplicationFramework::GetCurrentBackBufferView() con
 D3D12_CPU_DESCRIPTOR_HANDLE ApplicationFramework::GetDepthStencilView() const
 {
 	return mDSVHeap->GetCPUDescriptorHandleForHeapStart();
+}
+
+void ApplicationFramework::CalculateFrameStats()
+{
+	static int FrameCount = 0;
+	static float TimeElapsed = 0.0f;
+
+	FrameCount++;
+
+	// compute averages over one second period
+	if ((mGameTimer.GetTotalTime() - TimeElapsed) >= 1.0f)
+	{
+		const float fps = static_cast<float>(FrameCount); // fps = FrameCount / 1 sec
+		const float mspf = 1000.0f / fps; // milliseconds per frame
+
+		const std::wstring windowText = mMainWindowTitle +
+										L"    fps: " + std::to_wstring(fps) +
+										L"   mspf: " + std::to_wstring(mspf);
+
+		SetWindowText(mMainWindow, windowText.c_str());
+
+		// reset for next average
+		FrameCount = 0;
+		TimeElapsed += 1.0f;
+	}
 }
 
 void ApplicationFramework::FlushCommandQueue()
