@@ -1,13 +1,5 @@
 #include "LightingUtils.hlsl"
 
-struct InstanceData
-{
-	float4x4 world;
-	float4x4 TexCoordTransform;
-	uint MaterialIndex;
-	float3 padding;
-};
-
 struct MaterialData
 {
 	float4 DiffuseAlbedo;
@@ -18,16 +10,30 @@ struct MaterialData
 	float3 padding;
 };
 
+struct InstanceData
+{
+	float4x4 world;
+	float4x4 TexCoordTransform;
+	uint MaterialIndex;
+	float3 padding;
+};
+
 // array of textures
-Texture2D gDiffuseTexture[7] : register(t0, space0);
-// instance buffer, it contains all visible instances
-StructuredBuffer<InstanceData> gInstanceBuffer : register(t0, space1);
+Texture2D gDiffuseTexture[1] : register(t0, space0);
 // material buffer, it contains all materials
-StructuredBuffer<MaterialData> gMaterialBuffer : register(t1, space1);
+StructuredBuffer<MaterialData> gMaterialBuffer : register(t0, space1);
 
 SamplerState gSamplerLinearWrap : register(s2);
 
-cbuffer MainPassCB : register(b0)
+cbuffer ObjectCB : register(b0)
+{
+	float4x4 gWorld;
+	float4x4 gTexCoordTransform;
+	uint gMaterialIndex;
+	float3 padding;
+};
+
+cbuffer MainPassCB : register(b1)
 {
 	float4x4 gView;
 	float4x4 gViewInverse;
@@ -77,19 +83,18 @@ VertexOut VS(const VertexIn vin, const uint InstanceID : SV_InstanceID)
 {
 	VertexOut vout;
 
-	const InstanceData instance = gInstanceBuffer[InstanceID];
-	const MaterialData material = gMaterialBuffer[instance.MaterialIndex];
+	const MaterialData material = gMaterialBuffer[gMaterialIndex];
 
-	const float4 PositionW = mul(float4(vin.PositionL, 1.0f), instance.world);
+	const float4 PositionW = mul(float4(vin.PositionL, 1.0f), gWorld);
 	vout.PositionW = PositionW.xyz;
 	vout.PositionH = mul(PositionW, gViewProj);
 
-	vout.NormalW = mul(vin.NormalL, (float3x3)(instance.world));
+	vout.NormalW = mul(vin.NormalL, (float3x3)(gWorld));
 
-	const float4 TexCoord = mul(float4(vin.TexCoord, 0.0f, 1.0f), instance.TexCoordTransform);
+	const float4 TexCoord = mul(float4(vin.TexCoord, 0.0f, 1.0f), gTexCoordTransform);
 	vout.TexCoord = mul(TexCoord, material.transform).xy;
 
-	vout.MaterialIndex = instance.MaterialIndex;
+	vout.MaterialIndex = gMaterialIndex;
 
 	return vout;
 }

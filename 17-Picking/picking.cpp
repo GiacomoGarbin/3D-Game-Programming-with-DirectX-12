@@ -4,7 +4,7 @@
 #include "MathHelper.h"
 #include "camera.h"
 
-#include <numeric>
+//#include <numeric>
 #include <sstream>
 #include <fstream>
 
@@ -29,10 +29,9 @@ struct RenderItem
 	D3D12_PRIMITIVE_TOPOLOGY PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
 	BoundingBox bounds;
-	std::vector<InstanceData> instances;
+	bool bIsVisible = true;
 
 	UINT IndexCount = 0;
-	UINT InstanceCount = 0;
 	UINT StartIndexLocation = 0;
 	int BaseVertexLocation = 0;
 };
@@ -40,6 +39,7 @@ struct RenderItem
 enum class RenderLayer : int
 {
 	opaque = 0,
+	highlight,
 	count
 };
 
@@ -65,15 +65,13 @@ class ApplicationInstance : public ApplicationFramework
 
 	std::vector<std::unique_ptr<RenderItem>> mRenderItems;
 	std::vector<RenderItem*> mLayerRenderItems[static_cast<int>(RenderLayer::count)];
-
-	UINT mInstanceCount = 0;
+	RenderItem* mPickedRenderItem = nullptr;
 
 	MainPassConstants mMainPassCB;
-	//UINT mMainPassCBVOffset = 0;
 
 	Camera mCamera;
-	BoundingFrustum mCameraFrustum;
-	bool mIsFrustumCullingEnabled = true;
+	//BoundingFrustum mCameraFrustum;
+	//bool mIsFrustumCullingEnabled = true;
 
 	bool mIsWireFrameEnabled = false;
 
@@ -91,14 +89,14 @@ class ApplicationInstance : public ApplicationFramework
 	void OnKeyboardEvent(const GameTimer& timer);
 
 	void AnimateMaterials(const GameTimer& timer);
-	void UpdateInstanceData(const GameTimer& timer);
+	void UpdateObjectCBs(const GameTimer& timer);
 	void UpdateMaterialBuffer(const GameTimer& timer);
 	void UpdateMainPassCB(const GameTimer& timer);
 
 	void BuildRootSignatures();
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
-	void BuildSkullGeometry();
+	void BuildGeometry();
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -109,6 +107,8 @@ class ApplicationInstance : public ApplicationFramework
 
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList,
 						 const std::vector<RenderItem*>& RenderItems);
+
+	void pick(int x, int y);
 
 public:
 	ApplicationInstance(HINSTANCE instance);
@@ -140,13 +140,15 @@ bool ApplicationInstance::init()
 
 	mCBVSRVUAVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	mCamera.SetPosition(0.0f, 2.0f, -15.0f);
+	mCamera.LookAt(XMFLOAT3(5.0f, 4.0f, -15.0f),
+				   XMFLOAT3(0.0f, 1.0f, 0.0f),
+				   XMFLOAT3(0.0f, 1.0f, 0.0f));
 
 	LoadTextures();
 	BuildRootSignatures();
 	BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
-	BuildSkullGeometry();
+	BuildGeometry();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -203,7 +205,7 @@ void ApplicationInstance::OnResize()
 	ApplicationFramework::OnResize();
 
 	mCamera.SetLens(0.25f * XM_PI, GetAspectRatio(), 1.0f, 1000.0f);
-	BoundingFrustum::CreateFromMatrix(mCameraFrustum, mCamera.GetProj());
+	//BoundingFrustum::CreateFromMatrix(mCameraFrustum, mCamera.GetProj());
 }
 
 void ApplicationInstance::update(GameTimer& timer)
@@ -222,7 +224,7 @@ void ApplicationInstance::update(GameTimer& timer)
 	}
 
 	AnimateMaterials(timer);
-	UpdateInstanceData(timer);
+	UpdateObjectCBs(timer);
 	UpdateMaterialBuffer(timer);
 	UpdateMainPassCB(timer);
 }
@@ -247,14 +249,8 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	ThrowIfFailed(CommandAllocator->Reset());
 
-	if (mIsWireFrameEnabled)
-	{
-		ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(), mPipelineStateObjects["opaque_wireframe"].Get()));
-	}
-	else
-	{
-		ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(), mPipelineStateObjects["opaque"].Get()));
-	}
+	ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(),
+									  mPipelineStateObjects[mIsWireFrameEnabled ? "opaque_wireframe" : "opaque"].Get()));
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
@@ -284,16 +280,20 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	// bind main pass constant buffer
 	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
-	mCommandList->SetGraphicsRootConstantBufferView(2, MainPassCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(1, MainPassCB->GetGPUVirtualAddress());
 
 	// bind all materials
 	auto MaterialBuffer = mCurrentFrameResource->MaterialBuffer->GetResource();
-	mCommandList->SetGraphicsRootShaderResourceView(1, MaterialBuffer->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootShaderResourceView(2, MaterialBuffer->GetGPUVirtualAddress());
 
 	// bind all textures
 	mCommandList->SetGraphicsRootDescriptorTable(3, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
+
+	mCommandList->SetPipelineState(mPipelineStateObjects[mIsWireFrameEnabled ? "highlight_wireframe" : "highlight"].Get());
+
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::highlight)]);
 
 	// imgui
 	{
@@ -324,10 +324,17 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 void ApplicationInstance::OnMouseDown(WPARAM state, int x, int y)
 {
-	mLastMousePosition.x = x;
-	mLastMousePosition.y = y;
+	if ((state & MK_LBUTTON) != 0)
+	{
+		mLastMousePosition.x = x;
+		mLastMousePosition.y = y;
 
-	SetCapture(mMainWindow);
+		SetCapture(mMainWindow);
+	}
+	else if ((state & MK_RBUTTON) != 0)
+	{
+		pick(x, y);
+	}
 }
 
 void ApplicationInstance::OnMouseUp(WPARAM state, int x, int y)
@@ -357,7 +364,7 @@ void ApplicationInstance::OnMouseMove(WPARAM state, int x, int y)
 
 void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 {
-	//mIsWireFrameEnabled = (GetAsyncKeyState('1') & 0x8000);
+	mIsWireFrameEnabled = (GetAsyncKeyState('1') & 0x8000);
 
 	const float dt = timer.GetDeltaTime();
 
@@ -378,15 +385,15 @@ void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 		mCamera.strafe(+10.0f * dt);
 	}
 
-	if (GetAsyncKeyState('1') & 0x8000)
-	{
-		mIsFrustumCullingEnabled = true;
-	}
+	//if (GetAsyncKeyState('1') & 0x8000)
+	//{
+	//	mIsFrustumCullingEnabled = true;
+	//}
 
-	if (GetAsyncKeyState('2') & 0x8000)
-	{
-		mIsFrustumCullingEnabled = false;
-	}
+	//if (GetAsyncKeyState('2') & 0x8000)
+	//{
+	//	mIsFrustumCullingEnabled = false;
+	//}
 
 	mCamera.UpdateViewMatrix();
 }
@@ -394,55 +401,75 @@ void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 void ApplicationInstance::AnimateMaterials(const GameTimer& timer)
 {}
 
-void ApplicationInstance::UpdateInstanceData(const GameTimer& timer)
+void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
 {
-	const XMMATRIX view = mCamera.GetView();
+	//const XMMATRIX view = mCamera.GetView();
 
-	XMVECTOR determinant = XMMatrixDeterminant(view);
-	const XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
+	//XMVECTOR determinant = XMMatrixDeterminant(view);
+	//const XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
 
-	auto CurrentInstanceBuffer = mCurrentFrameResource->InstanceBuffer.get();
+	//auto CurrentInstanceBuffer = mCurrentFrameResource->InstanceBuffer.get();
+
+	//for (auto& object : mRenderItems)
+	//{
+	//	UINT VisibleInstanceCount = 0;
+
+	//	for (const InstanceData& instance : object->instances)
+	//	{
+	//		const XMMATRIX world = XMLoadFloat4x4(&instance.world);
+	//		const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&instance.TexCoordTransform);
+
+	//		XMVECTOR determinant = XMMatrixDeterminant(world);
+	//		const XMMATRIX WorldInverse = XMMatrixInverse(&determinant, world);
+
+	//		// view space to the object's local space
+	//		const XMMATRIX ViewToLocal = XMMatrixMultiply(ViewInverse, WorldInverse);
+
+	//		// transform the camera frustum from view space to the object's local space
+	//		BoundingFrustum LocalSpaceFrustum;
+	//		mCameraFrustum.Transform(LocalSpaceFrustum, ViewToLocal);
+
+	//		// box-frustum intersection test in local space
+	//		if ((LocalSpaceFrustum.Contains(object->bounds) != DirectX::DISJOINT) || (mIsFrustumCullingEnabled == false))
+	//		{
+	//			InstanceData data;
+	//			XMStoreFloat4x4(&data.world, XMMatrixTranspose(world));
+	//			XMStoreFloat4x4(&data.TexCoordTransform, XMMatrixTranspose(TexCoordTransform));
+	//			data.MaterialIndex = instance.MaterialIndex;
+
+	//			// write the instance data to structured buffer for the visible objects
+	//			CurrentInstanceBuffer->CopyData(VisibleInstanceCount++, data);
+	//		}
+	//	}
+
+	//	object->InstanceCount = VisibleInstanceCount;
+
+	//	std::wostringstream stream;
+	//	stream.precision(6);
+	//	stream <<	L"Instancing and Frustum Culling" <<
+	//				L"    " << object->InstanceCount <<
+	//				L" objects visible out of " << object->instances.size();
+	//	mMainWindowTitle = stream.str();
+	//}
+
+	auto CurrentObjectCB = mCurrentFrameResource->ObjectCB.get();
 
 	for (auto& object : mRenderItems)
 	{
-		UINT VisibleInstanceCount = 0;
-
-		for (const InstanceData& instance : object->instances)
+		if (object->DirtyFramesCount > 0)
 		{
-			const XMMATRIX world = XMLoadFloat4x4(&instance.world);
-			const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&instance.TexCoordTransform);
+			const XMMATRIX world = XMLoadFloat4x4(&object->world);
+			const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&object->TexCoordTransform);
 
-			XMVECTOR determinant = XMMatrixDeterminant(world);
-			const XMMATRIX WorldInverse = XMMatrixInverse(&determinant, world);
+			ObjectConstants buffer;
+			XMStoreFloat4x4(&buffer.world, XMMatrixTranspose(world));
+			XMStoreFloat4x4(&buffer.TexCoordTransform, XMMatrixTranspose(TexCoordTransform));
+			buffer.MaterialIndex = object->material->ConstantBufferIndex;
 
-			// view space to the object's local space
-			const XMMATRIX ViewToLocal = XMMatrixMultiply(ViewInverse, WorldInverse);
+			CurrentObjectCB->CopyData(object->ConstantBufferIndex, buffer);
 
-			// transform the camera frustum from view space to the object's local space
-			BoundingFrustum LocalSpaceFrustum;
-			mCameraFrustum.Transform(LocalSpaceFrustum, ViewToLocal);
-
-			// box-frustum intersection test in local space
-			if ((LocalSpaceFrustum.Contains(object->bounds) != DirectX::DISJOINT) || (mIsFrustumCullingEnabled == false))
-			{
-				InstanceData data;
-				XMStoreFloat4x4(&data.world, XMMatrixTranspose(world));
-				XMStoreFloat4x4(&data.TexCoordTransform, XMMatrixTranspose(TexCoordTransform));
-				data.MaterialIndex = instance.MaterialIndex;
-
-				// write the instance data to structured buffer for the visible objects
-				CurrentInstanceBuffer->CopyData(VisibleInstanceCount++, data);
-			}
+			object->DirtyFramesCount--;
 		}
-
-		object->InstanceCount = VisibleInstanceCount;
-
-		std::wostringstream stream;
-		stream.precision(6);
-		stream <<	L"Instancing and Frustum Culling" <<
-					L"    " << object->InstanceCount <<
-					L" objects visible out of " << object->instances.size();
-		mMainWindowTitle = stream.str();
 	}
 }
 
@@ -535,14 +562,14 @@ void ApplicationInstance::LoadTextures()
 		mTextures[texture->name] = std::move(texture);
 	};
 
-	const std::array<const std::string, 7> textures =
+	const std::array<const std::string, 1> textures =
 	{
-		"bricks",
-		"stone",
-		"tile",
-		"WoodCrate01",
-		"ice",
-		"grass",
+		//"bricks",
+		//"stone",
+		//"tile",
+		//"WoodCrate01",
+		//"ice",
+		//"grass",
 		"white1x1"
 	};
 
@@ -558,9 +585,9 @@ void ApplicationInstance::BuildRootSignatures()
 	TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, mTextures.size(), 0, 0);
 
 	CD3DX12_ROOT_PARAMETER params[4];
-	params[0].InitAsShaderResourceView(0, 1);
-	params[1].InitAsShaderResourceView(1, 1);
-	params[2].InitAsConstantBufferView(0);
+	params[0].InitAsConstantBufferView(0);
+	params[1].InitAsConstantBufferView(1);
+	params[2].InitAsShaderResourceView(0, 1);
 	params[3].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	auto StaticSamplers = GetStaticSamplers();
@@ -660,13 +687,13 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 	};
 }
 
-void ApplicationInstance::BuildSkullGeometry()
+void ApplicationInstance::BuildGeometry()
 {
-	std::ifstream stream("../models/skull.txt");
+	std::ifstream stream("../models/car.txt");
 
 	if (!stream)
 	{
-		MessageBox(0, L"models/skull.txt not found", 0, 0);
+		MessageBox(0, L"models/car.txt not found", 0, 0);
 		return;
 	}
 
@@ -737,7 +764,7 @@ void ApplicationInstance::BuildSkullGeometry()
 	const UINT IndexBufferByteSize = indices.size() * sizeof(uint32_t);
 
 	auto geometry = std::make_unique<MeshGeometry>();
-	geometry->name = "skull";
+	geometry->name = "car";
 
 	ThrowIfFailed(D3DCreateBlob(VertexBufferByteSize, &geometry->VertexBufferCPU));
 	CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), VertexBufferByteSize);
@@ -809,8 +836,41 @@ void ApplicationInstance::BuildPipelineStateObjects()
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["opaque_wireframe"];
 
 		desc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque_wireframe"])));
+	}
+
+	// highlight
+	{
+		descs["highlight"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["highlight"];
+
+		desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+
+		D3D12_RENDER_TARGET_BLEND_DESC& BlendDesc = desc.BlendState.RenderTarget[0];
+		BlendDesc.BlendEnable = true;
+		BlendDesc.LogicOpEnable = false;
+		BlendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		BlendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		BlendDesc.BlendOp = D3D12_BLEND_OP_ADD;
+		BlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+		BlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
+		BlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		BlendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
+		BlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["highlight"])));
+	}
+
+	// highlight wireframe
+	{
+		descs["highlight_wireframe"] = descs["highlight"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["highlight_wireframe"];
+
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["highlight_wireframe"])));
 	}
 }
 
@@ -820,7 +880,7 @@ void ApplicationInstance::BuildFrameResources()
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(mDevice.Get(),
 																  1,
-																  mInstanceCount,
+																  mRenderItems.size(),
 																  mMaterials.size()));
 	}
 }
@@ -829,25 +889,20 @@ void ApplicationInstance::BuildMaterials()
 {
 	using MaterialInfo = const std::tuple<const std::string, const XMFLOAT4, const XMFLOAT3, const float>;
 
-	const std::array<MaterialInfo, 7> materials =
+	const std::array<MaterialInfo, 2> materials =
 	{
-		MaterialInfo("bricks", XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.1f),
-		MaterialInfo("stone",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f),
-		MaterialInfo("tile",   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.3f),
-		MaterialInfo("crate",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.2f),
-		MaterialInfo("ice",    XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 0.0f),
-		MaterialInfo("grass",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.2f),
-		MaterialInfo("skull",  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.5f)
+		MaterialInfo("gray",      XMFLOAT4(0.7f, 0.7f, 0.7f, 1.0f), XMFLOAT3(0.04f, 0.04f, 0.04f), 0.0f),
+		MaterialInfo("highlight", XMFLOAT4(1.0f, 1.0f, 0.0f, 0.6f), XMFLOAT3(0.06f, 0.06f, 0.06f), 0.0f)
 	};
 
-	UINT ConstantBufferIndex = 0;
+	UINT MaterialBufferIndex = 0;
 
 	for (const auto& [name, diffuse, fresnel, roughness] : materials)
 	{
 		auto material = std::make_unique<Material>();
 		material->name = name;
-		material->ConstantBufferIndex = ConstantBufferIndex++;
-		material->DiffuseSRVHeapIndex = material->ConstantBufferIndex;
+		material->ConstantBufferIndex = MaterialBufferIndex++;
+		material->DiffuseSRVHeapIndex = 0;
 		material->DiffuseAlbedo = diffuse;
 		material->FresnelR0 = fresnel;
 		material->roughness = roughness;
@@ -858,57 +913,59 @@ void ApplicationInstance::BuildMaterials()
 
 void ApplicationInstance::BuildRenderItems()
 {
-	auto item = std::make_unique<RenderItem>();
-
-	item->world = MathHelper::Identity4x4();
-	item->TexCoordTransform = MathHelper::Identity4x4();
-	item->ConstantBufferIndex = 0;
-	item->geometry = mMeshGeometries["skull"].get();
-	item->material = mMaterials["skull"].get();
-	item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	item->InstanceCount = 0;
-	item->IndexCount = item->geometry->DrawArgs["skull"].IndexCount;
-	item->StartIndexLocation = item->geometry->DrawArgs["skull"].StartIndexLocation;
-	item->BaseVertexLocation = item->geometry->DrawArgs["skull"].BaseVertexLocation;
-	item->bounds = item->geometry->DrawArgs["skull"].BoundingBox;
-
-	const UINT n = 5;
-	mInstanceCount = n * n * n;
-	item->instances.resize(mInstanceCount);
-
-	const float width = 200.0f;
-	const float height = 200.0f;
-	const float depth = 200.0f;
-
-	const float x = -0.5f * width;
-	const float y = -0.5f * height;
-	const float z = -0.5f * depth;
-	const float dx = width / (n - 1);
-	const float dy = height / (n - 1);
-	const float dz = depth / (n - 1);
-	
-	for (UINT k = 0; k < n; ++k)
+	// car
 	{
-		for (UINT i = 0; i < n; ++i)
-		{
-			for (UINT j = 0; j < n; ++j)
-			{
-				const UINT index = k * n * n + i * n + j;
-				XMStoreFloat4x4(&item->instances[index].world, XMMatrixTranslation(x + j * dx, y + i * dy, z + k * dz));
-				XMStoreFloat4x4(&item->instances[index].TexCoordTransform, XMMatrixScaling(2.0f, 2.0f, 1.0f));
-				item->instances[index].MaterialIndex = index % mMaterials.size();
-			}
-		}
+		auto item = std::make_unique<RenderItem>();
+
+		XMStoreFloat4x4(&item->world, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
+		item->TexCoordTransform = MathHelper::Identity4x4();
+		item->ConstantBufferIndex = 0;
+		item->geometry = mMeshGeometries["car"].get();
+		item->material = mMaterials["gray"].get();
+		item->bounds = item->geometry->DrawArgs["car"].BoundingBox;
+		item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		item->IndexCount = item->geometry->DrawArgs["car"].IndexCount;
+		item->StartIndexLocation = item->geometry->DrawArgs["car"].StartIndexLocation;
+		item->BaseVertexLocation = item->geometry->DrawArgs["car"].BaseVertexLocation;
+		
+		mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
+		mRenderItems.push_back(std::move(item));
 	}
 
-	mLayerRenderItems[static_cast<int>(RenderLayer::opaque)].push_back(item.get());
-	mRenderItems.push_back(std::move(item));
+	// picked triangle
+	{
+		auto item = std::make_unique<RenderItem>();
+
+		item->world = MathHelper::Identity4x4();
+		item->TexCoordTransform = MathHelper::Identity4x4();
+		item->ConstantBufferIndex = 1;
+		item->geometry = mMeshGeometries["car"].get();
+		item->material = mMaterials["highlight"].get();
+		item->bIsVisible = false;
+		item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		item->IndexCount = 0;
+		item->StartIndexLocation = 0;
+		item->BaseVertexLocation = 0;
+
+		mPickedRenderItem = item.get();
+
+		mLayerRenderItems[static_cast<int>(RenderLayer::highlight)].push_back(item.get());
+		mRenderItems.push_back(std::move(item));
+	}
 }
 
 void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems)
 {
+	const UINT ObjectCBByteSize = Utils::GetConstantBufferByteSize(sizeof(ObjectConstants));
+	const auto ObjectCB = mCurrentFrameResource->ObjectCB->GetResource();
+
 	for (const auto& item : RenderItems)
 	{
+		if (!item->bIsVisible)
+		{
+			continue;
+		}
+
 		const D3D12_VERTEX_BUFFER_VIEW& VertexBufferView = item->geometry->GetVertexBufferView();
 		CommandList->IASetVertexBuffers(0, 1, &VertexBufferView);
 		const D3D12_INDEX_BUFFER_VIEW& IndexBufferView = item->geometry->GetIndexBufferView();
@@ -916,15 +973,100 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 
 		CommandList->IASetPrimitiveTopology(item->PrimitiveTopology);
 
-		// bind instance buffer
-		const auto InstanceBuffer = mCurrentFrameResource->InstanceBuffer->GetResource();
-		CommandList->SetGraphicsRootShaderResourceView(0, InstanceBuffer->GetGPUVirtualAddress());
+		// bind object constant buffer
+		const D3D12_GPU_VIRTUAL_ADDRESS ObjectCBAddress = ObjectCB->GetGPUVirtualAddress() + item->ConstantBufferIndex * ObjectCBByteSize;
+		CommandList->SetGraphicsRootConstantBufferView(0, ObjectCBAddress);
 
-		CommandList->DrawIndexedInstanced(item->IndexCount,
-										  item->InstanceCount,
-										  item->StartIndexLocation,
-										  item->BaseVertexLocation,
-										  0);
+		CommandList->DrawIndexedInstanced(item->IndexCount, 1, item->StartIndexLocation, item->BaseVertexLocation, 0);
+	}
+}
+
+void ApplicationInstance::pick(int x, int y)
+{
+	const XMFLOAT4X4 P = mCamera.GetProjF();
+
+	// compute picking ray in view space
+	const float vx = (+2.0f * x / mMainWindowWidth  - 1.0f) / P(0, 0);
+	const float vy = (-2.0f * y / mMainWindowHeight + 1.0f) / P(1, 1);
+
+	// ray origin and direction in view space
+	XMVECTOR O = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+	XMVECTOR D = XMVectorSet(vx, vy, 1.0f, 0.0f);
+
+	const XMMATRIX V = mCamera.GetView();
+
+	XMVECTOR determinant = XMMatrixDeterminant(V);
+	const XMMATRIX ViewInverse = XMMatrixInverse(&determinant, V);
+
+	// assume nothing is picked to start
+	mPickedRenderItem->bIsVisible = false;
+
+	for (const auto& item : mLayerRenderItems[static_cast<int>(RenderLayer::opaque)])
+	{
+		if (!item->bIsVisible)
+		{
+			continue;
+		}
+
+		const XMMATRIX W = XMLoadFloat4x4(&item->world);
+
+		XMVECTOR determinant = XMMatrixDeterminant(W);
+		const XMMATRIX WorldInverse = XMMatrixInverse(&determinant, W);
+
+		XMMATRIX ToLocal = XMMatrixMultiply(ViewInverse, WorldInverse);
+
+		// tranform ray to local space of mesh
+		O = XMVector3TransformCoord(O, ToLocal);
+		D = XMVector3TransformNormal(D, ToLocal);
+
+		D = XMVector3Normalize(D);
+
+		float T = 0.0f;
+		// mesh bounding box / ray test
+		if (item->bounds.Intersects(O, D, T))
+		{
+			const Vertex* vertices = static_cast<const Vertex*>(item->geometry->VertexBufferCPU->GetBufferPointer());
+			const std::uint32_t* indices = static_cast<const std::uint32_t*>(item->geometry->IndexBufferCPU->GetBufferPointer());
+			const UINT TriangleCount = item->IndexCount / 3;
+
+			// find the nearest ray / triangle intersection
+			T = MathHelper::infinity;
+
+			for (UINT i = 0; i < TriangleCount; ++i)
+			{
+				// indices for this triangle
+				const UINT i0 = indices[i * 3 + 0];
+				const UINT i1 = indices[i * 3 + 1];
+				const UINT i2 = indices[i * 3 + 2];
+
+				// vertices for this triangle
+				const XMVECTOR v0 = XMLoadFloat3(&vertices[i0].position);
+				const XMVECTOR v1 = XMLoadFloat3(&vertices[i1].position);
+				const XMVECTOR v2 = XMLoadFloat3(&vertices[i2].position);
+
+				// iterate over all the triangles in order to find the nearest intersection
+				float t = 0.0f;
+				if (TriangleTests::Intersects(O, D, v0, v1, v2, t))
+				{
+					if (t < T)
+					{
+						// new nearest picked triangle
+						T = t;
+
+						mPickedRenderItem->bIsVisible = true;
+						mPickedRenderItem->IndexCount = 3;
+						mPickedRenderItem->BaseVertexLocation = 0;
+
+						// picked triangle needs same world matrix as object picked
+						mPickedRenderItem->world = item->world;
+						mPickedRenderItem->DirtyFramesCount = gFrameResourcesCount;
+
+						// offset to the picked triangle in the mesh index buffer
+						mPickedRenderItem->StartIndexLocation = 3 * i;
+					}
+				}
+			}
+		}
 	}
 }
 
