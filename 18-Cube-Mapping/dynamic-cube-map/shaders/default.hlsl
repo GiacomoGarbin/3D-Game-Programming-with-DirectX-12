@@ -60,6 +60,14 @@ float4 PS(const VertexOut pin) : SV_Target
 	
 	float4 result = ambient + direct;
 
+	// specular reflections
+	{
+		const float3 r = reflect(-ToEyeW, normal);
+		const float4 reflection = gCubeMap.Sample(gSamplerLinearWrap, r);
+		const float3 fresnel = SchlickFresnel(material.FresnelR0, normal, r);
+		result.rgb += shininess * fresnel * reflection.rgb;
+	}
+
 #ifdef FOG
 	const float FogAmount = saturate((DistToEye - gFogStart) / gFogRange);
 	result = lerp(result, gFogColor, FogAmount);

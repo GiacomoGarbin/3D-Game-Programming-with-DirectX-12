@@ -158,6 +158,7 @@
     <ClCompile Include="..\..\common\GeometryGenerator.cpp" />
     <ClCompile Include="..\..\common\MathHelper.cpp" />
     <ClCompile Include="..\..\common\utils.cpp" />
+    <ClCompile Include="CubeRenderTarget.cpp" />
     <ClCompile Include="FrameResource.cpp" />
     <ClCompile Include="static-cube-map.cpp" />
   </ItemGroup>
@@ -174,6 +175,7 @@
     <ClInclude Include="..\..\common\GeometryGenerator.h" />
     <ClInclude Include="..\..\common\MathHelper.h" />
     <ClInclude Include="..\..\common\utils.h" />
+    <ClInclude Include="CubeRenderTarget.h" />
     <ClInclude Include="FrameResource.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
