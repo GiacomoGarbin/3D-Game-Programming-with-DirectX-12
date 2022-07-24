@@ -13,11 +13,17 @@ public:
 
 	static XMFLOAT4X4 Identity4x4()
 	{
-		static XMFLOAT4X4 I(1.0f, 0.0f, 0.0f, 0.0f,
-							0.0f, 1.0f, 0.0f, 0.0f,
-							0.0f, 0.0f, 1.0f, 0.0f,
-							0.0f, 0.0f, 0.0f, 1.0f);
+		static const XMFLOAT4X4 I(1.0f, 0.0f, 0.0f, 0.0f,
+								  0.0f, 1.0f, 0.0f, 0.0f,
+								  0.0f, 0.0f, 1.0f, 0.0f,
+								  0.0f, 0.0f, 0.0f, 1.0f);
 		return I;
+	}
+
+	static XMMATRIX GetMatrixInverse(const XMMATRIX& matrix)
+	{
+		XMVECTOR determinant = XMMatrixDeterminant(matrix);
+		return XMMatrixInverse(&determinant, matrix);
 	}
 
 	template<typename T>
