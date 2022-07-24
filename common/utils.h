@@ -33,7 +33,7 @@ using namespace DirectX;
 // common
 #include "MathHelper.h"
 
-extern const int gFrameResourcesCount;
+extern const UINT kFrameResourcesCount;
 
 inline std::wstring AnsiToWString(const std::string& str)
 {
@@ -191,7 +191,7 @@ struct Material
     int DiffuseSRVHeapIndex = -1;
     int NormalSRVHeapIndex = -1;
 
-    int DirtyFramesCount = gFrameResourcesCount;
+    int DirtyFramesCount = kFrameResourcesCount;
 
     XMFLOAT4 DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
     XMFLOAT3 FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
