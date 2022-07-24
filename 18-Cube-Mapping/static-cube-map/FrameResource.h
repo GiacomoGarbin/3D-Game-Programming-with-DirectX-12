@@ -4,6 +4,7 @@
 #include "MathHelper.h"
 
 #define LIGHT_MAX_COUNT 16
+#define IS_FOG_ENABLED 0
 
 struct Vertex
 {
@@ -39,10 +40,12 @@ struct MainPassConstants
 
 	XMFLOAT4 AmbientLight = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
 
-	//XMFLOAT4 FogColor = { 0.7f, 0.7f, 0.7f, 1.0f };
-	//float FogStart = 5.0f;
-	//float FogRange = 150.0f;
-	//XMFLOAT2 padding2;
+#if IS_FOG_ENABLED
+	XMFLOAT4 FogColor = { 0.7f, 0.7f, 0.7f, 1.0f };
+	float FogStart = 5.0f;
+	float FogRange = 150.0f;
+	XMFLOAT2 padding2;
+#endif // IS_FOG_ENABLED
 
 	Light lights[LIGHT_MAX_COUNT];
 };
@@ -62,7 +65,10 @@ struct MaterialData
 
 struct FrameResource
 {
-	FrameResource(ID3D12Device* device, UINT MainPassCount, UINT ObjectCount, UINT MaterialCount);
+	FrameResource(ID3D12Device* device,
+				  const UINT MainPassCount,
+				  const UINT ObjectCount,
+				  const UINT MaterialCount);
 	~FrameResource();
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CommandAllocator;
