@@ -11,6 +11,7 @@ struct Vertex
 	XMFLOAT3 position;
 	XMFLOAT3 normal;
 	XMFLOAT2 TexCoord;
+	XMFLOAT3 tangent;
 };
 
 struct ObjectConstants
@@ -33,10 +34,10 @@ struct MainPassConstants
 	float padding1;
 	XMFLOAT2 RenderTargetSize = { 0.0f, 0.0f };
 	XMFLOAT2 RenderTargetSizeInverse = { 0.0f, 0.0f };
-	float NearPlane = 0;
-	float FarPlane = 0;
-	float DeltaTime = 0;
-	float TotalTime = 0;
+	float NearPlane = 0.0f;
+	float FarPlane = 0.0f;
+	float DeltaTime = 0.0f;
+	float TotalTime = 0.0f;
 
 	XMFLOAT4 AmbientLight = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -60,7 +61,8 @@ struct MaterialData
 	XMFLOAT4X4 transform = MathHelper::Identity4x4();
 
 	UINT DiffuseTextureIndex = 0;
-	XMFLOAT3 padding;
+	UINT NormalTextureIndex = 0;
+	XMFLOAT2 padding;
 };
 
 struct FrameResource

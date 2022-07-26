@@ -75,6 +75,7 @@ class ApplicationInstance : public ApplicationFramework
 	//bool mIsFrustumCullingEnabled = true;
 
 	bool mIsWireFrameEnabled = false;
+	bool mIsNormalMappingEnabled = false;
 
 	POINT mLastMousePosition = { 0, 0 };
 
@@ -98,7 +99,7 @@ class ApplicationInstance : public ApplicationFramework
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
 	void BuildSceneGeometry();
-	void BuildSkullGeometry();
+	//void BuildSkullGeometry();
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -140,16 +141,14 @@ bool ApplicationInstance::init()
 
 	mCBVSRVUAVDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	mCamera.LookAt(XMFLOAT3(5.0f, 4.0f, -15.0f),
-				   XMFLOAT3(0.0f, 1.0f, 0.0f),
-				   XMFLOAT3(0.0f, 1.0f, 0.0f));
+	mCamera.SetPosition(0.0f, 2.0f, -15.0f);
 
 	LoadTextures();
 	BuildRootSignatures();
 	BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
 	BuildSceneGeometry();
-	BuildSkullGeometry();
+	//BuildSkullGeometry();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -250,8 +249,9 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	ThrowIfFailed(CommandAllocator->Reset());
 
-	ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(),
-									  mPipelineStateObjects[mIsWireFrameEnabled ? "opaque_wireframe" : "opaque"].Get()));
+	const auto& pso = mPipelineStateObjects[mIsWireFrameEnabled ? "opaque_wireframe" : mIsNormalMappingEnabled ? "opaque_normal_mapping" : "opaque"].Get();
+
+	ThrowIfFailed(mCommandList->Reset(CommandAllocator.Get(), pso));
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
@@ -367,6 +367,7 @@ void ApplicationInstance::OnMouseMove(WPARAM state, int x, int y)
 void ApplicationInstance::OnKeyboardEvent(const GameTimer& timer)
 {
 	mIsWireFrameEnabled = (GetAsyncKeyState('1') & 0x8000);
+	mIsNormalMappingEnabled = !(GetAsyncKeyState('2') & 0x8000);
 
 	const float dt = timer.GetDeltaTime();
 
@@ -406,9 +407,7 @@ void ApplicationInstance::AnimateMaterials(const GameTimer& timer)
 void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
 {
 	//const XMMATRIX view = mCamera.GetView();
-
-	//XMVECTOR determinant = XMMatrixDeterminant(view);
-	//const XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
+	//const XMMATRIX ViewInverse = MathHelper::GetMatrixInverse(view);
 
 	//auto CurrentInstanceBuffer = mCurrentFrameResource->InstanceBuffer.get();
 
@@ -419,10 +418,8 @@ void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
 	//	for (const InstanceData& instance : object->instances)
 	//	{
 	//		const XMMATRIX world = XMLoadFloat4x4(&instance.world);
+	//		const XMMATRIX WorldInverse = MathHelper::GetMatrixInverse(world);
 	//		const XMMATRIX TexCoordTransform = XMLoadFloat4x4(&instance.TexCoordTransform);
-
-	//		XMVECTOR determinant = XMMatrixDeterminant(world);
-	//		const XMMATRIX WorldInverse = XMMatrixInverse(&determinant, world);
 
 	//		// view space to the object's local space
 	//		const XMMATRIX ViewToLocal = XMMatrixMultiply(ViewInverse, WorldInverse);
@@ -491,6 +488,7 @@ void ApplicationInstance::UpdateMaterialBuffer(const GameTimer& timer)
 			buffer.roughness = material->roughness;
 			XMStoreFloat4x4(&buffer.transform, XMMatrixTranspose(MaterialTransform));
 			buffer.DiffuseTextureIndex = material->DiffuseSRVHeapIndex;
+			buffer.NormalTextureIndex = material->NormalSRVHeapIndex;
 
 			CurrentMaterialBuffer->CopyData(material->ConstantBufferIndex, buffer);
 
@@ -501,17 +499,12 @@ void ApplicationInstance::UpdateMaterialBuffer(const GameTimer& timer)
 
 void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 {
-	XMVECTOR determinant;
-
 	XMMATRIX view = mCamera.GetView();
-	determinant = XMMatrixDeterminant(view);
-	XMMATRIX ViewInverse = XMMatrixInverse(&determinant, view);
+	XMMATRIX ViewInverse = MathHelper::GetMatrixInverse(view);
 	XMMATRIX proj = mCamera.GetProj();
-	determinant = XMMatrixDeterminant(proj);
-	XMMATRIX ProjInverse = XMMatrixInverse(&determinant, proj);
+	XMMATRIX ProjInverse = MathHelper::GetMatrixInverse(proj);
 	XMMATRIX ViewProj = view * proj;
-	determinant = XMMatrixDeterminant(ViewProj);
-	XMMATRIX ViewProjInverse = XMMatrixInverse(&determinant, ViewProj);
+	XMMATRIX ViewProjInverse = MathHelper::GetMatrixInverse(ViewProj);
 
 	XMStoreFloat4x4(&mMainPassCB.view, XMMatrixTranspose(view));
 	XMStoreFloat4x4(&mMainPassCB.ViewInverse, XMMatrixTranspose(ViewInverse));
@@ -530,11 +523,11 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
 	mMainPassCB.lights[0].direction = { +0.57735f, -0.57735f, +0.57735f };
-	mMainPassCB.lights[0].strength = { 0.6f, 0.6f, 0.6f };
+	mMainPassCB.lights[0].strength = { 0.8f, 0.8f, 0.8f };
 	mMainPassCB.lights[1].direction = { -0.57735f, -0.57735f, +0.57735f };
-	mMainPassCB.lights[1].strength = { 0.3f, 0.3f, 0.3f };
+	mMainPassCB.lights[1].strength = { 0.4f, 0.4f, 0.4f };
 	mMainPassCB.lights[2].direction = { 0.0f, -0.707f, -0.707f };
-	mMainPassCB.lights[2].strength = { 0.15f, 0.15f, 0.15f };
+	mMainPassCB.lights[2].strength = { 0.2f, 0.2f, 0.2f };
 
 	auto CurrentMainPassCB = mCurrentFrameResource->MainPassCB.get();
 	CurrentMainPassCB->CopyData(0, mMainPassCB);
@@ -564,12 +557,15 @@ void ApplicationInstance::LoadTextures()
 		mTextures[texture->name] = std::move(texture);
 	};
 
-	const std::array<const std::string, 4> textures =
+	const std::array<const std::string, 7> textures =
 	{
 		"bricks2",
+		"bricks2_nmap",
 		"tile",
+		"tile_nmap",
 		"white1x1",
-		"grasscube1024"
+		"default_nmap",
+		"snowcube1024"
 	};
 
 	for (const std::string& texture : textures)
@@ -680,30 +676,52 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		descriptor.Offset(1, mCBVSRVUAVDescriptorSize);
 	};
 
-	for (const auto& [name, texture] : mTextures)
+	const std::array<const std::string, 7> textures =
 	{
-		if (name == "grasscube1024")
+		"bricks2",
+		"bricks2_nmap",
+		"tile",
+		"tile_nmap",
+		"white1x1",
+		"default_nmap",
+		"snowcube1024"
+	};
+
+	for (const auto& name : textures)
+	{
+		const auto& texture = mTextures[name];
+
+		if (name == "snowcube1024")
 		{
 			CreateSRV(texture->resource, D3D12_SRV_DIMENSION_TEXTURECUBE);
-			mSkyTextureHeapIndex = 3;
 		}
 		else
 		{
 			CreateSRV(texture->resource);
 		}
 	}
+
+	mSkyTextureHeapIndex = mTextures.size() - 1;
 }
 
 void ApplicationInstance::BuildShadersAndInputLayout()
 {
+	const D3D_SHADER_MACRO defines[] =
+	{
+		"NORMAL_MAPPING", "1",
+		nullptr, nullptr
+	};
+
 #if RENDERDOC_BUILD
 	mShaders["VS"] = Utils::CompileShader(L"../../shaders/default.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["PS"] = Utils::CompileShader(L"../../shaders/default.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["NormalMappingPS"] = Utils::CompileShader(L"../../shaders/default.hlsl", defines, "PS", "ps_5_1");
 	mShaders["SkyVS"] = Utils::CompileShader(L"../../shaders/sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["SkyPS"] = Utils::CompileShader(L"../../shaders/sky.hlsl", nullptr, "PS", "ps_5_1");
 #else // RENDERDOC_BUILD
 	mShaders["VS"] = Utils::CompileShader(L"shaders/default.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["PS"] = Utils::CompileShader(L"shaders/default.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["NormalMappingPS"] = Utils::CompileShader(L"shaders/default.hlsl", defines, "PS", "ps_5_1");
 	mShaders["SkyVS"] = Utils::CompileShader(L"shaders/sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["SkyPS"] = Utils::CompileShader(L"shaders/sky.hlsl", nullptr, "PS", "ps_5_1");
 #endif // RENDERDOC_BUILD
@@ -713,6 +731,7 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -745,6 +764,7 @@ void ApplicationInstance::BuildSceneGeometry()
 			iter->position = vertex.position;
 			iter->normal = vertex.normal;
 			iter->TexCoord = vertex.TexCoord;
+			iter->tangent = vertex.tangent;
 
 			iter++;
 		}
@@ -812,122 +832,122 @@ void ApplicationInstance::BuildSceneGeometry()
 	mMeshGeometries[geometry->name] = std::move(geometry);
 }
 
-void ApplicationInstance::BuildSkullGeometry()
-{
-#if RENDERDOC_BUILD
-	std::ifstream stream("../../../models/skull.txt");
-#else // RENDERDOC_BUILD
-	std::ifstream stream("../models/skull.txt");
-#endif // RENDERDOC_BUILD
-
-	if (!stream)
-	{
-		MessageBox(0, L"models/skull.txt not found", 0, 0);
-		return;
-	}
-
-	UINT VertexCount = 0;
-	UINT TriangleCount = 0;
-	std::string ignore;
-
-	stream >> ignore >> VertexCount;
-	stream >> ignore >> TriangleCount;
-	stream >> ignore >> ignore >> ignore >> ignore;
-
-	const XMFLOAT3 vMinf3(+MathHelper::infinity, +MathHelper::infinity, +MathHelper::infinity);
-	const XMFLOAT3 vMaxf3(-MathHelper::infinity, -MathHelper::infinity, -MathHelper::infinity);
-
-	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
-	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
-
-	std::vector<Vertex> vertices(VertexCount);
-
-	for (UINT i = 0; i < VertexCount; ++i)
-	{
-		stream >> vertices[i].position.x >> vertices[i].position.y >> vertices[i].position.z;
-		stream >> vertices[i].normal.x >> vertices[i].normal.y >> vertices[i].normal.z;
-
-		const XMVECTOR P = XMLoadFloat3(&vertices[i].position);
-
-		// project point onto unit sphere and generate spherical texture coordinates
-		XMFLOAT3 spherePos;
-		XMStoreFloat3(&spherePos, XMVector3Normalize(P));
-
-		float theta = atan2f(spherePos.z, spherePos.x);
-
-		// put in [0, 2pi]
-		if (theta < 0.0f)
-		{
-			theta += XM_2PI;
-		}
-
-		const float phi = acosf(spherePos.y);
-
-		const float u = theta / (2.0f * XM_PI);
-		const float v = phi / XM_PI;
-
-		vertices[i].TexCoord = { u, v };
-
-		vMin = XMVectorMin(vMin, P);
-		vMax = XMVectorMax(vMax, P);
-	}
-
-	BoundingBox bounds;
-	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
-	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
-
-	stream >> ignore;
-	stream >> ignore;
-	stream >> ignore;
-
-	std::vector<std::int32_t> indices(3 * TriangleCount);
-
-	for (UINT i = 0; i < TriangleCount; ++i)
-	{
-		stream >> indices[i * 3 + 0] >> indices[i * 3 + 1] >> indices[i * 3 + 2];
-	}
-
-	stream.close();
-
-	const UINT VertexBufferByteSize = vertices.size() * sizeof(Vertex);
-	const UINT IndexBufferByteSize = indices.size() * sizeof(uint32_t);
-
-	auto geometry = std::make_unique<MeshGeometry>();
-	geometry->name = "skull";
-
-	ThrowIfFailed(D3DCreateBlob(VertexBufferByteSize, &geometry->VertexBufferCPU));
-	CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), VertexBufferByteSize);
-
-	ThrowIfFailed(D3DCreateBlob(IndexBufferByteSize, &geometry->IndexBufferCPU));
-	CopyMemory(geometry->IndexBufferCPU->GetBufferPointer(), indices.data(), IndexBufferByteSize);
-
-	geometry->VertexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
-														   mCommandList.Get(),
-														   vertices.data(),
-														   VertexBufferByteSize,
-														   geometry->VertexBufferUploader);
-
-	geometry->IndexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
-														  mCommandList.Get(),
-														  indices.data(),
-														  IndexBufferByteSize,
-														  geometry->IndexBufferUploader);
-
-	geometry->VertexByteStride = sizeof(Vertex);
-	geometry->VertexBufferByteSize = VertexBufferByteSize;
-	geometry->IndexFormat = DXGI_FORMAT_R32_UINT;
-	geometry->IndexBufferByteSize = IndexBufferByteSize;
-
-	SubMeshGeometry SubMesh;
-	SubMesh.IndexCount = indices.size();
-	SubMesh.StartIndexLocation = 0;
-	SubMesh.BaseVertexLocation = 0;
-	SubMesh.BoundingBox = bounds;
-
-	geometry->DrawArgs[geometry->name] = SubMesh;
-
-	mMeshGeometries[geometry->name] = std::move(geometry);
-}
+//void ApplicationInstance::BuildSkullGeometry()
+//{
+//#if RENDERDOC_BUILD
+//	std::ifstream stream("../../../models/skull.txt");
+//#else // RENDERDOC_BUILD
+//	std::ifstream stream("../models/skull.txt");
+//#endif // RENDERDOC_BUILD
+//
+//	if (!stream)
+//	{
+//		MessageBox(0, L"models/skull.txt not found", 0, 0);
+//		return;
+//	}
+//
+//	UINT VertexCount = 0;
+//	UINT TriangleCount = 0;
+//	std::string ignore;
+//
+//	stream >> ignore >> VertexCount;
+//	stream >> ignore >> TriangleCount;
+//	stream >> ignore >> ignore >> ignore >> ignore;
+//
+//	const XMFLOAT3 vMinf3(+MathHelper::infinity, +MathHelper::infinity, +MathHelper::infinity);
+//	const XMFLOAT3 vMaxf3(-MathHelper::infinity, -MathHelper::infinity, -MathHelper::infinity);
+//
+//	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
+//	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
+//
+//	std::vector<Vertex> vertices(VertexCount);
+//
+//	for (UINT i = 0; i < VertexCount; ++i)
+//	{
+//		stream >> vertices[i].position.x >> vertices[i].position.y >> vertices[i].position.z;
+//		stream >> vertices[i].normal.x >> vertices[i].normal.y >> vertices[i].normal.z;
+//
+//		const XMVECTOR P = XMLoadFloat3(&vertices[i].position);
+//
+//		// project point onto unit sphere and generate spherical texture coordinates
+//		XMFLOAT3 spherePos;
+//		XMStoreFloat3(&spherePos, XMVector3Normalize(P));
+//
+//		float theta = atan2f(spherePos.z, spherePos.x);
+//
+//		// put in [0, 2pi]
+//		if (theta < 0.0f)
+//		{
+//			theta += XM_2PI;
+//		}
+//
+//		const float phi = acosf(spherePos.y);
+//
+//		const float u = theta / (2.0f * XM_PI);
+//		const float v = phi / XM_PI;
+//
+//		vertices[i].TexCoord = { u, v };
+//
+//		vMin = XMVectorMin(vMin, P);
+//		vMax = XMVectorMax(vMax, P);
+//	}
+//
+//	BoundingBox bounds;
+//	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
+//	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
+//
+//	stream >> ignore;
+//	stream >> ignore;
+//	stream >> ignore;
+//
+//	std::vector<std::int32_t> indices(3 * TriangleCount);
+//
+//	for (UINT i = 0; i < TriangleCount; ++i)
+//	{
+//		stream >> indices[i * 3 + 0] >> indices[i * 3 + 1] >> indices[i * 3 + 2];
+//	}
+//
+//	stream.close();
+//
+//	const UINT VertexBufferByteSize = vertices.size() * sizeof(Vertex);
+//	const UINT IndexBufferByteSize = indices.size() * sizeof(uint32_t);
+//
+//	auto geometry = std::make_unique<MeshGeometry>();
+//	geometry->name = "skull";
+//
+//	ThrowIfFailed(D3DCreateBlob(VertexBufferByteSize, &geometry->VertexBufferCPU));
+//	CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), VertexBufferByteSize);
+//
+//	ThrowIfFailed(D3DCreateBlob(IndexBufferByteSize, &geometry->IndexBufferCPU));
+//	CopyMemory(geometry->IndexBufferCPU->GetBufferPointer(), indices.data(), IndexBufferByteSize);
+//
+//	geometry->VertexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
+//														   mCommandList.Get(),
+//														   vertices.data(),
+//														   VertexBufferByteSize,
+//														   geometry->VertexBufferUploader);
+//
+//	geometry->IndexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
+//														  mCommandList.Get(),
+//														  indices.data(),
+//														  IndexBufferByteSize,
+//														  geometry->IndexBufferUploader);
+//
+//	geometry->VertexByteStride = sizeof(Vertex);
+//	geometry->VertexBufferByteSize = VertexBufferByteSize;
+//	geometry->IndexFormat = DXGI_FORMAT_R32_UINT;
+//	geometry->IndexBufferByteSize = IndexBufferByteSize;
+//
+//	SubMeshGeometry SubMesh;
+//	SubMesh.IndexCount = indices.size();
+//	SubMesh.StartIndexLocation = 0;
+//	SubMesh.BaseVertexLocation = 0;
+//	SubMesh.BoundingBox = bounds;
+//
+//	geometry->DrawArgs[geometry->name] = SubMesh;
+//
+//	mMeshGeometries[geometry->name] = std::move(geometry);
+//}
 
 void ApplicationInstance::BuildPipelineStateObjects()
 {
@@ -957,6 +977,17 @@ void ApplicationInstance::BuildPipelineStateObjects()
 		desc.SampleDesc.Quality = m4xMSAAState ? (m4xMSAAQuality - 1) : 0;
 
 		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque"])));
+	}
+
+	// opaque normal mapping
+	{
+		descs["opaque_normal_mapping"] = descs["opaque"];
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["opaque_normal_mapping"];
+
+		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["NormalMappingPS"]->GetBufferPointer());
+		desc.PS.BytecodeLength = mShaders["NormalMappingPS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque_normal_mapping"])));
 	}
 
 	// opaque wireframe
@@ -1012,26 +1043,27 @@ void ApplicationInstance::BuildFrameResources()
 
 void ApplicationInstance::BuildMaterials()
 {
-	// name, DiffuseSRVHeapIndex, diffuse, fresnel, roughness
-	using MaterialInfo = const std::tuple<const std::string, const int, const XMFLOAT4, const XMFLOAT3, const float>;
+	// name, DiffuseSRVHeapIndex, NormalTextureIndex, diffuse, fresnel, roughness
+	using MaterialInfo = const std::tuple<const std::string, const int, const int, const XMFLOAT4, const XMFLOAT3, const float>;
 
-	const std::array<MaterialInfo, 5> materials =
+	const std::array<MaterialInfo, 4> materials =
 	{
-		MaterialInfo("bricks", 0, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f),    0.3f),
-		MaterialInfo("tile",   1, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f),    0.1f),
-		MaterialInfo("mirror", 2, XMFLOAT4(0.0f, 0.0f, 0.1f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f),
-		MaterialInfo("skull",  2, XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f),    0.2f),
-		MaterialInfo("sky",    3, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f),    1.0f)
+		MaterialInfo("bricks", 0, 1, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f),    0.3f),
+		MaterialInfo("tile",   2, 3, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f),    0.1f),
+		MaterialInfo("mirror", 4, 5, XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f),
+		//MaterialInfo("skull",  2, XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f),    0.2f),
+		MaterialInfo("sky",    6, 7, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f),    1.0f)
 	};
 
 	UINT MaterialBufferIndex = 0;
 
-	for (const auto& [name, index, diffuse, fresnel, roughness] : materials)
+	for (const auto& [name, DiffuseTextureIndex, NormalTextureIndex, diffuse, fresnel, roughness] : materials)
 	{
 		auto material = std::make_unique<Material>();
 		material->name = name;
 		material->ConstantBufferIndex = MaterialBufferIndex++;
-		material->DiffuseSRVHeapIndex = index;
+		material->DiffuseSRVHeapIndex = DiffuseTextureIndex;
+		material->NormalSRVHeapIndex = NormalTextureIndex;
 		material->DiffuseAlbedo = diffuse;
 		material->FresnelR0 = fresnel;
 		material->roughness = roughness;
@@ -1050,8 +1082,9 @@ void ApplicationInstance::BuildRenderItems()
 	std::vector<data> items =
 	{
 		data(RenderLayer::sky,    "sphere", "meshes", "sky",    XMMatrixScaling(5000.0f, 5000.0f, 5000.0f),                                XMMatrixIdentity()),
-		data(RenderLayer::opaque, "box",    "meshes", "bricks", XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f), XMMatrixIdentity()),
-		data(RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f), XMMatrixIdentity()),
+		data(RenderLayer::opaque, "box",    "meshes", "bricks", XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f), XMMatrixScaling(1.0f, 0.5f, 1.0f)),
+		//data(RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f), XMMatrixIdentity()),
+		data(RenderLayer::opaque, "sphere", "meshes", "mirror", XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 2.0f, 0.0f), XMMatrixIdentity()),
 		data(RenderLayer::opaque, "grid",   "meshes", "tile",   XMMatrixIdentity(),                                                        XMMatrixScaling(8.0f, 8.0f, 1.0f))
 	};
 
@@ -1064,7 +1097,7 @@ void ApplicationInstance::BuildRenderItems()
 			// cylinder
 			{
 				const XMMATRIX world = XMMatrixTranslation(side * 5.0f, 1.5f, -10.0f + i * 5.0f);
-				const data item(RenderLayer::opaque, "cylinder", "meshes", "bricks", world, XMMatrixIdentity());
+				const data item(RenderLayer::opaque, "cylinder", "meshes", "bricks", world, XMMatrixScaling(1.5f, 2.0f, 1.0f));
 				items.push_back(item);
 			}
 
