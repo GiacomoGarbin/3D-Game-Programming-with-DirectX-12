@@ -36,4 +36,5 @@ public:
 	MeshData CreateGrid(float width, float depth, uint32_t m, uint32_t n);
 	MeshData CreateCylinder(float RadiusBottom, float RadiusTop, float height, uint32_t SliceCount, uint32_t StackCount);
 	MeshData CreateSphere(float radius, uint32_t SliceCount, uint32_t StackCount);
+	MeshData CreateQuad(float x, float y, float w, float h, float depth);
 };

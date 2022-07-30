@@ -370,3 +370,27 @@ GeometryGenerator::MeshData GeometryGenerator::CreateSphere(float radius, uint32
 
 	return mesh;
 }
+
+GeometryGenerator::MeshData GeometryGenerator::CreateQuad(float x, float y, float w, float h, float depth)
+{
+	MeshData mesh;
+
+	mesh.vertices.resize(4);
+	mesh.indices32.resize(6);
+
+	// position coordinates specified in NDC space
+	mesh.vertices[0] = VertexData(x,     y - h, depth, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+	mesh.vertices[1] = VertexData(x,     y,     depth, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+	mesh.vertices[2] = VertexData(x + w, y,     depth, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+	mesh.vertices[3] = VertexData(x + w, y - h, depth, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f);
+
+	mesh.indices32[0] = 0;
+	mesh.indices32[1] = 1;
+	mesh.indices32[2] = 2;
+
+	mesh.indices32[3] = 0;
+	mesh.indices32[4] = 2;
+	mesh.indices32[5] = 3;
+
+	return mesh;
+}
