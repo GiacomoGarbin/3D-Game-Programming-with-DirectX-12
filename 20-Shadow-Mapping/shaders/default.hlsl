@@ -11,10 +11,11 @@ struct VertexIn
 struct VertexOut
 {
 	float4 PositionH : SV_POSITION;
-	float3 PositionW : POSITION;
+	float3 PositionW : POSITION0;
 	float3 NormalW : NORMAL;
 	float3 TangentW : TANGENT;
 	float2 TexCoord : TEXCOORD;
+	float4 ShadowPositionH : POSITION1;
 };
 
 VertexOut VS(const VertexIn vin)
@@ -32,6 +33,9 @@ VertexOut VS(const VertexIn vin)
 
 	const float4 TexCoord = mul(float4(vin.TexCoord, 0.0f, 1.0f), gTexCoordTransform);
 	vout.TexCoord = mul(TexCoord, material.transform).xy;
+
+	// projective tex-coords to project shadow map onto scene
+	vout.ShadowPositionH = mul(PositionW, gShadowMapTransform);
 
 	return vout;
 }
@@ -59,7 +63,7 @@ float4 PS(const VertexOut pin) : SV_Target
 
 	// indirect lighting
 	const float4 ambient = gAmbientLight * DiffuseAlbedo;
-
+	
 	// direct lighting
 #if NORMAL_MAPPING
 	const float shininess = (1.0f - material.roughness) * NormalSample.a;
@@ -67,7 +71,13 @@ float4 PS(const VertexOut pin) : SV_Target
 	const float shininess = 1.0f - material.roughness;
 #endif // NORMAL_MAPPING
 	const Material LightMaterial = { DiffuseAlbedo, material.FresnelR0, shininess };
+#if SHADOW || 1
+    // only the first light casts a shadow
+    float3 ShadowFactor = float3(1.0f, 1.0f, 1.0f);
+	ShadowFactor[0] = CalculateShadowFactor(pin.ShadowPositionH);
+#else // SHADOW
 	const float3 ShadowFactor = 1.0f;
+#endif // SHADOW
 	const float4 direct = ComputeLighting(gLights, LightMaterial, pin.PositionW, normal, ToEyeW, ShadowFactor);
 	
 	float4 result = ambient + direct;

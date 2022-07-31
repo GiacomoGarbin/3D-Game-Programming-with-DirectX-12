@@ -6,14 +6,6 @@
 #define LIGHT_MAX_COUNT 16
 #define IS_FOG_ENABLED 0
 
-struct Vertex
-{
-	XMFLOAT3 position;
-	XMFLOAT3 normal;
-	XMFLOAT2 TexCoord;
-	XMFLOAT3 tangent;
-};
-
 struct ObjectConstants
 {
 	XMFLOAT4X4 world = MathHelper::Identity4x4();
@@ -30,6 +22,7 @@ struct MainPassConstants
 	XMFLOAT4X4 ProjInverse = MathHelper::Identity4x4();
 	XMFLOAT4X4 ViewProj = MathHelper::Identity4x4();
 	XMFLOAT4X4 ViewProjInverse = MathHelper::Identity4x4();
+	XMFLOAT4X4 ShadowTransform = MathHelper::Identity4x4();
 	XMFLOAT3 EyePositionWorld = { 0.0f, 0.0f, 0.0f };
 	float padding1;
 	XMFLOAT2 RenderTargetSize = { 0.0f, 0.0f };
@@ -63,6 +56,14 @@ struct MaterialData
 	UINT DiffuseTextureIndex = 0;
 	UINT NormalTextureIndex = 0;
 	XMFLOAT2 padding;
+};
+
+struct Vertex
+{
+	XMFLOAT3 position;
+	XMFLOAT3 normal;
+	XMFLOAT2 TexCoord;
+	XMFLOAT3 tangent;
 };
 
 struct FrameResource
