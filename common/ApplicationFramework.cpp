@@ -236,7 +236,12 @@ void ApplicationFramework::OnResize()
 	clear.DepthStencil.Stencil = 0;
 
 	auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-	ThrowIfFailed(mDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, &clear, IID_PPV_ARGS(mDepthStencilBuffer.GetAddressOf())));
+	ThrowIfFailed(mDevice->CreateCommittedResource(&heap,
+												   D3D12_HEAP_FLAG_NONE,
+												   &desc,
+												   D3D12_RESOURCE_STATE_COMMON,
+												   &clear,
+												   IID_PPV_ARGS(mDepthStencilBuffer.GetAddressOf())));
 
 	// depth stencil view
 	{
