@@ -161,6 +161,7 @@
     <ClCompile Include="ambient-occlusion.cpp" />
     <ClCompile Include="FrameResource.cpp" />
     <ClCompile Include="ShadowMap.cpp" />
+    <ClCompile Include="SSAO.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\imgui\backends\imgui_impl_dx12.h" />
@@ -177,6 +178,7 @@
     <ClInclude Include="..\common\utils.h" />
     <ClInclude Include="FrameResource.h" />
     <ClInclude Include="ShadowMap.h" />
+    <ClInclude Include="SSAO.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

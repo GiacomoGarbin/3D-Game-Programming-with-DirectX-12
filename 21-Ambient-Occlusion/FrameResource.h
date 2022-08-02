@@ -44,6 +44,28 @@ struct MainPassConstants
 	Light lights[LIGHT_MAX_COUNT];
 };
 
+struct AmbientOcclusionConstants
+{
+	XMFLOAT4X4 proj = MathHelper::Identity4x4();
+	XMFLOAT4X4 ProjInverse = MathHelper::Identity4x4();
+	XMFLOAT4X4 ProjTex;
+	XMFLOAT4   OffsetVectors[14];
+
+	XMFLOAT4 BlurWeights[3];
+
+	XMFLOAT2 InvRenderTargetSize = { 0.0f, 0.0f };
+
+	// coordinates given in view space
+	float OcclusionRadius = 0.5f;
+	float OcclusionFadeStart = 0.2f;
+	float OcclusionFadeEnd = 2.0f;
+	float SurfaceEpsilon = 0.05f;
+
+	XMFLOAT2 padding;
+};
+
+static_assert(sizeof(AmbientOcclusionConstants) % 16 == 0);
+
 struct MaterialData
 {
 	XMFLOAT4 DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -79,6 +101,7 @@ struct FrameResource
 	std::unique_ptr<UploadBuffer<MainPassConstants>> MainPassCB = nullptr;
 	std::unique_ptr<UploadBuffer<MaterialData>> MaterialBuffer = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
+	std::unique_ptr<UploadBuffer<AmbientOcclusionConstants>> AmbientOcclusionCB = nullptr;
 
 	UINT64 fence = 0;
 };

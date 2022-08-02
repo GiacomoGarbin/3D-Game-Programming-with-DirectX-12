@@ -15,8 +15,10 @@ struct MaterialData
 TextureCube gCubeMap : register(t0, space0);
 // shadow map texture
 Texture2D gShadowMap : register(t1, space0);
+// ambient occlusion map texture
+Texture2D gAmbientOcclusionMap : register(t2, space0);
 // array of textures
-Texture2D gDiffuseTexture[6] : register(t2, space0);
+Texture2D gDiffuseTexture[6] : register(t3, space0);
 
 // material buffer, it contains all materials
 StructuredBuffer<MaterialData> gMaterialBuffer : register(t0, space1);

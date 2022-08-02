@@ -62,7 +62,13 @@ float4 PS(const VertexOut pin) : SV_Target
 	ToEyeW /= DistToEye;
 
 	// indirect lighting
+#if AMBIENT_OCCLUSION || 1
+	const float2 TexCoord = pin.PositionH.xy * gRenderTargetSizeInverse;
+	const float AmbientAccess = gAmbientOcclusionMap.Sample(gSamplerLinearClamp, TexCoord, 0.0f).r;
+	const float4 ambient = gAmbientLight * DiffuseAlbedo * AmbientAccess;
+#else // AMBIENT_OCCLUSION
 	const float4 ambient = gAmbientLight * DiffuseAlbedo;
+#endif // AMBIENT_OCCLUSION
 	
 	// direct lighting
 #if NORMAL_MAPPING
