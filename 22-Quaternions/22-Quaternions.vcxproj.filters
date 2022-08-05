@@ -72,6 +72,9 @@
     <ClCompile Include="..\common\utils.cpp">
       <Filter>common</Filter>
     </ClCompile>
+    <ClCompile Include="AnimationHelper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FrameResource.h">
@@ -118,6 +121,9 @@
     </ClInclude>
     <ClInclude Include="..\common\utils.h">
       <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="AnimationHelper.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

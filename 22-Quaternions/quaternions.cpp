@@ -5,6 +5,7 @@
 #include "camera.h"
 #include "ShadowMap.h"
 #include "SSAO.h"
+#include "AnimationHelper.h"
 
 #include <numeric>
 #include <sstream>
@@ -78,6 +79,12 @@ class ApplicationInstance : public ApplicationFramework
 	std::vector<std::unique_ptr<RenderItem>> mRenderItems;
 	std::vector<RenderItem*> mLayerRenderItems[static_cast<int>(RenderLayer::count)];
 
+	RenderItem* mSkullRenderItem = nullptr;
+	//XMFLOAT4X4 mSkullWorld = MathHelper::Identity4x4();
+
+	float mAnimationTime = 0.0f;
+	BoneAnimation mSkullAnimation;
+
 	UINT mSkyTextureHeapIndex = 0;
 	UINT mShadowMapTextureHeapIndex = 0;
 	UINT mAmbientOcclusionTextureHeapIndex = 0;
@@ -144,6 +151,7 @@ class ApplicationInstance : public ApplicationFramework
 	void BuildShadersAndInputLayout();
 	void BuildSceneGeometry();
 	void BuildSkullGeometry();
+	void DefineSkullAnimation();
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -212,6 +220,7 @@ bool ApplicationInstance::init()
 	BuildShadersAndInputLayout();
 	BuildSceneGeometry();
 	BuildSkullGeometry();
+	DefineSkullAnimation();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -235,7 +244,7 @@ void ApplicationInstance::CreateRTVAndDSVDescriptorHeaps()
 	// RTV
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc;
-		desc.NumDescriptors = SwapChainBufferSize + 3; // +1 normals +1 ambient map +1 blur extra ambient map
+		desc.NumDescriptors = SwapChainBufferSize + 3; // +1 normal map +2 ambient maps (blur ping-pong)
 		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 		desc.NodeMask = 0;
@@ -283,6 +292,21 @@ void ApplicationInstance::OnResize()
 void ApplicationInstance::update(GameTimer& timer)
 {
 	OnKeyboardEvent(timer);
+
+	// animate skull
+	{
+		mAnimationTime += timer.GetDeltaTime();
+
+		if (mAnimationTime >= mSkullAnimation.GetEndTime())
+		{
+			// roll back animation
+			mAnimationTime = 0.0f;
+		}
+
+		mSkullAnimation.interpolate(mAnimationTime, mSkullRenderItem->world);
+		//mSkullRenderItem->world = mSkullWorld;
+		mSkullRenderItem->DirtyFramesCount = kFrameResourcesCount;
+	}
 
 	mCurrentFrameResourceIndex = (mCurrentFrameResourceIndex + 1) % kFrameResourcesCount;
 	mCurrentFrameResource = mFrameResources[mCurrentFrameResourceIndex].get();
@@ -698,14 +722,14 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	mMainPassCB.DeltaTime = timer.GetDeltaTime();
 	mMainPassCB.TotalTime = timer.GetTotalTime();
 
-	mMainPassCB.AmbientLight = { 0.4f, 0.4f, 0.6f, 1.0f };
+	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
 	mMainPassCB.lights[0].direction = mRotatedLightDirections[0];
-	mMainPassCB.lights[0].strength = { 0.4f, 0.4f, 0.5f };
+	mMainPassCB.lights[0].strength = { 0.6f, 0.6f, 0.6f };
 	mMainPassCB.lights[1].direction = mRotatedLightDirections[1];
-	mMainPassCB.lights[1].strength = { 0.1f, 0.1f, 0.1f };
+	mMainPassCB.lights[1].strength = { 0.3f, 0.3f, 0.3f };
 	mMainPassCB.lights[2].direction = mRotatedLightDirections[2];
-	mMainPassCB.lights[2].strength = { 0.0f, 0.0f, 0.0f };
+	mMainPassCB.lights[2].strength = { 0.15f, 0.15f, 0.15f };
 
 	auto CurrentMainPassCB = mCurrentFrameResource->MainPassCB.get();
 	CurrentMainPassCB->CopyData(0, mMainPassCB);
@@ -801,7 +825,7 @@ void ApplicationInstance::LoadTextures()
 
 	};
 
-	const std::array<const std::string, 7> textures =
+	const std::array<const std::string, 8> textures =
 	{
 		"bricks2",
 		"bricks2_nmap",
@@ -809,6 +833,7 @@ void ApplicationInstance::LoadTextures()
 		"tile_nmap",
 		"white1x1",
 		"default_nmap",
+		"WoodCrate01",
 		"sunsetcube1024"
 	};
 
@@ -999,7 +1024,7 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		descriptor.Offset(1, mCBVSRVUAVDescriptorSize);
 	};
 
-	const std::array<const std::string, 7> textures =
+	const std::array<const std::string, 8> textures =
 	{
 		"bricks2",
 		"bricks2_nmap",
@@ -1007,6 +1032,7 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		"tile_nmap",
 		"white1x1",
 		"default_nmap",
+		"WoodCrate01",
 		"sunsetcube1024"
 	};
 
@@ -1056,7 +1082,7 @@ void ApplicationInstance::BuildDescriptorHeaps()
 
 	// null SRVs
 	{
-		const UINT kNullCubeMapTextureHeapIndex = mAmbientOcclusionTextureHeapIndex + 5; // +?
+		const UINT kNullCubeMapTextureHeapIndex = mAmbientOcclusionTextureHeapIndex + 5;
 
 		CreateSRV(nullptr, D3D12_SRV_DIMENSION_TEXTURECUBE);	// null cube map
 		CreateSRV(nullptr);										// 1st null texture 2D
@@ -1226,7 +1252,6 @@ void ApplicationInstance::BuildSceneGeometry()
 void ApplicationInstance::BuildSkullGeometry()
 {
 	std::ifstream stream(PREFIX(L"../models/skull.txt"));
-	//std::ifstream stream("../../../models/skull.txt");
 
 	if (!stream)
 	{
@@ -1350,6 +1375,42 @@ void ApplicationInstance::BuildSkullGeometry()
 	geometry->DrawArgs[geometry->name] = SubMesh;
 
 	mMeshGeometries[geometry->name] = std::move(geometry);
+}
+
+void ApplicationInstance::DefineSkullAnimation()
+{
+	XMVECTOR q0 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(30.0f));
+	XMVECTOR q1 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 1.0f, 2.0f, 0.0f), XMConvertToRadians(45.0f));
+	XMVECTOR q2 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(-30.0f));
+	XMVECTOR q3 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), XMConvertToRadians(70.0f));
+
+	// define the animation keyframes
+	mSkullAnimation.KeyFrames.resize(5);
+
+	mSkullAnimation.KeyFrames[0].time = 0.0f;
+	mSkullAnimation.KeyFrames[0].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
+	mSkullAnimation.KeyFrames[0].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+	XMStoreFloat4(&mSkullAnimation.KeyFrames[0].rotation, q0);
+
+	mSkullAnimation.KeyFrames[1].time = 2.0f;
+	mSkullAnimation.KeyFrames[1].translation = XMFLOAT3(0.0f, 2.0f, 10.0f);
+	mSkullAnimation.KeyFrames[1].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
+	XMStoreFloat4(&mSkullAnimation.KeyFrames[1].rotation, q1);
+
+	mSkullAnimation.KeyFrames[2].time = 4.0f;
+	mSkullAnimation.KeyFrames[2].translation = XMFLOAT3(7.0f, 0.0f, 0.0f);
+	mSkullAnimation.KeyFrames[2].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+	XMStoreFloat4(&mSkullAnimation.KeyFrames[2].rotation, q2);
+
+	mSkullAnimation.KeyFrames[3].time = 6.0f;
+	mSkullAnimation.KeyFrames[3].translation = XMFLOAT3(0.0f, 1.0f, -10.0f);
+	mSkullAnimation.KeyFrames[3].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
+	XMStoreFloat4(&mSkullAnimation.KeyFrames[3].rotation, q3);
+
+	mSkullAnimation.KeyFrames[4].time = 8.0f;
+	mSkullAnimation.KeyFrames[4].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
+	mSkullAnimation.KeyFrames[4].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+	XMStoreFloat4(&mSkullAnimation.KeyFrames[4].rotation, q0);
 }
 
 void ApplicationInstance::BuildPipelineStateObjects()
@@ -1556,13 +1617,14 @@ void ApplicationInstance::BuildMaterials()
 									const XMFLOAT3,		// fresnel
 									const float>;		// roughness
 
-	const std::array<MaterialInfo, 5> materials =
+	const std::array<MaterialInfo, 6> materials =
 	{
 		MaterialInfo("bricks", 0, 1, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 0.3f),
 		MaterialInfo("tile",   2, 3, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), XMFLOAT3(0.20f, 0.20f, 0.20f), 0.1f),
 		MaterialInfo("mirror", 4, 5, XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f),
 		MaterialInfo("skull",  4, 5, XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f), XMFLOAT3(0.60f, 0.60f, 0.60f), 0.2f),
-		MaterialInfo("sky",    6, 7, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 1.0f)
+		MaterialInfo("crate",  6, 5, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.7f),
+		MaterialInfo("sky",    7, 8, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 1.0f)
 	};
 
 	UINT MaterialBufferIndex = 0;
@@ -1601,7 +1663,7 @@ void ApplicationInstance::BuildRenderItems()
 															XMMatrixIdentity()},
 		{RenderLayer::opaque, "box",    "meshes", "bricks", XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f),
 															XMMatrixScaling(1.0f, 0.5f, 1.0f)},
-		{RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f),
+		{RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f),
 															XMMatrixIdentity()},
 		{RenderLayer::opaque, "grid",   "meshes", "tile",   XMMatrixIdentity(),
 															XMMatrixScaling(8.0f, 8.0f, 1.0f)}
@@ -1632,6 +1694,11 @@ void ApplicationInstance::BuildRenderItems()
 	for (const auto& [layer, mesh, buffer, material, world, TexCoordTransform] : items)
 	{
 		auto item = std::make_unique<RenderItem>();
+
+		if (mesh == "skull")
+		{
+			mSkullRenderItem = item.get();
+		}
 
 		XMStoreFloat4x4(&item->world, world);
 		XMStoreFloat4x4(&item->TexCoordTransform, TexCoordTransform);
