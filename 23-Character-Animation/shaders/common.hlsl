@@ -18,7 +18,7 @@ Texture2D gShadowMap : register(t1, space0);
 // ambient occlusion map texture
 Texture2D gAmbientOcclusionMap : register(t2, space0);
 // array of textures
-Texture2D gDiffuseTexture[6] : register(t3, space0);
+Texture2D gDiffuseTexture[6 + 8] : register(t3, space0);
 
 // material buffer, it contains all materials
 StructuredBuffer<MaterialData> gMaterialBuffer : register(t0, space1);
@@ -39,7 +39,12 @@ cbuffer ObjectCB : register(b0)
 	float3 padding;
 };
 
-cbuffer MainPassCB : register(b1)
+cbuffer SkinnedCB : register(b1)
+{
+    float4x4 gBoneTransforms[96];
+};
+
+cbuffer MainPassCB : register(b2)
 {
 	float4x4 gView;
 	float4x4 gViewInverse;

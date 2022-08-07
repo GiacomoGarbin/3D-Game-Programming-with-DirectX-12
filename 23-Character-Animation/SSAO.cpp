@@ -230,6 +230,12 @@ void SSAO::ComputeAmbientOcclusion(ID3D12GraphicsCommandList* pCommandList,
     BlurAmbientMap(pCommandList, pCurrentFrame, kBlurCount);
 }
 
+void SSAO::ClearAmbientMap(ID3D12GraphicsCommandList* pCommandList)
+{
+    float clear[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    pCommandList->ClearRenderTargetView(mhAmbientMap0CpuRtv, clear, 0, nullptr);
+}
+
 void SSAO::BlurAmbientMap(ID3D12GraphicsCommandList* pCommandList,
                           FrameResource* pCurrentFrame,
                           const int count)
@@ -399,9 +405,11 @@ void SSAO::BuildRandomVectorTexture(ID3D12GraphicsCommandList* pCommandList)
                                                    D3D12_RESOURCE_STATE_GENERIC_READ,
                                                    nullptr,
                                                    IID_PPV_ARGS(&mRandomVectorMap)));
-
-    const std::string name = "SSAO_RandomVectorMap";
-    ThrowIfFailed(mRandomVectorMap->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
+    
+    {
+        const std::string name = "SSAO_RandomVectorMap";
+        ThrowIfFailed(mRandomVectorMap->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
+    }
 
     const UINT subresources = desc.DepthOrArraySize * desc.MipLevels;
     const UINT64 UploadBufferSize = GetRequiredIntermediateSize(mRandomVectorMap.Get(), 0, subresources);
@@ -414,9 +422,11 @@ void SSAO::BuildRandomVectorTexture(ID3D12GraphicsCommandList* pCommandList)
                                                    D3D12_RESOURCE_STATE_GENERIC_READ,
                                                    nullptr,
                                                    IID_PPV_ARGS(mRandomVectorMapUploadBuffer.GetAddressOf())));
-
-    //const std::string name = "SSAO_RandomVectorMapUploadBuffer";
-    //ThrowIfFailed(mRandomVectorMapUploadBuffer->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
+    
+    {
+        const std::string name = "SSAO_RandomVectorMapUploadBuffer";
+        ThrowIfFailed(mRandomVectorMapUploadBuffer->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
+    }
 
     DirectX::PackedVector::XMCOLOR vectors[256 * 256];
 

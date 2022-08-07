@@ -131,4 +131,7 @@ void ShadowMap::BuildResource()
 												   D3D12_RESOURCE_STATE_GENERIC_READ,
 												   &clear,
 												   IID_PPV_ARGS(&mShadowMap)));
+
+	const std::string name = "ShadowMap";
+	ThrowIfFailed(mShadowMap->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
 }

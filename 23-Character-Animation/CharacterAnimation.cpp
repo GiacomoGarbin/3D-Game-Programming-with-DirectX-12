@@ -5,12 +5,16 @@
 #include "camera.h"
 #include "ShadowMap.h"
 #include "SSAO.h"
-#include "AnimationHelper.h"
+#include "SkinnedData.h"
+#include "LoadM3D.h"
 
 #include <numeric>
 #include <sstream>
 #include <fstream>
 
+#include "pix3.h"
+
+// set the "Working Directory" in RenderDoc's "Launch Application" window to skip recompilation
 #define RENDERDOC_BUILD 0
 
 #if RENDERDOC_BUILD
@@ -22,6 +26,27 @@
 const UINT kFrameResourcesCount = 3;
 
 using samplers = std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7>;
+
+struct SkinnedModelInstance
+{
+	SkinnedData* SkinnedInfo = nullptr;
+	std::vector<XMFLOAT4X4> FinalTransforms;
+	std::string ClipName;
+	float time = 0.0f;
+
+	void UpdateSkinnedAnimation(float dt)
+	{
+		time += dt;
+
+		if (time > SkinnedInfo->GetClipEndTime(ClipName))
+		{
+			// loop animation
+			time = 0.0f;
+		}
+
+		SkinnedInfo->GetFinalTransforms(ClipName, time, FinalTransforms);
+	}
+};
 
 struct RenderItem
 {
@@ -45,11 +70,16 @@ struct RenderItem
 	UINT IndexCount = 0;
 	UINT StartIndexLocation = 0;
 	int BaseVertexLocation = 0;
+
+	// only for skinned models
+	UINT SkinnedConstantBufferIndex = -1;
+	SkinnedModelInstance* pSkinnedModelInstance = nullptr;
 };
 
 enum class RenderLayer : int
 {
 	opaque = 0,
+	skinned,
 	debug,
 	sky,
 	count
@@ -75,6 +105,7 @@ class ApplicationInstance : public ApplicationFramework
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPipelineStateObjects;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
+	std::vector<D3D12_INPUT_ELEMENT_DESC> mSkinnedInputLayout;
 
 	std::vector<std::unique_ptr<RenderItem>> mRenderItems;
 	std::vector<RenderItem*> mLayerRenderItems[static_cast<int>(RenderLayer::count)];
@@ -93,6 +124,15 @@ class ApplicationInstance : public ApplicationFramework
 	MainPassConstants mShadowPassCB;
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE mNullSRV;
+
+	// sky cube map is the last texture
+	std::vector<std::string> mTextureNames;
+
+	UINT mSkinnedTextureHeapIndex = 0;
+	std::unique_ptr<SkinnedModelInstance> mSkinnedModelInstance;
+	SkinnedData mSkinnedData;
+	std::vector<M3DLoader::Subset> mSkinnedSubsets;
+	std::vector<M3DLoader::M3DMaterial> mSkinnedMaterials;
 
 	Camera mCamera;
 	//BoundingFrustum mCameraFrustum;
@@ -139,6 +179,7 @@ class ApplicationInstance : public ApplicationFramework
 
 	void AnimateMaterials(const GameTimer& timer);
 	void UpdateObjectCBs(const GameTimer& timer);
+	void UpdateSkinnedCBs(const GameTimer& timer);
 	void UpdateMaterialBuffer(const GameTimer& timer);
 	void UpdateShadowTransform(const GameTimer& timer);
 	void UpdateMainPassCB(const GameTimer& timer);
@@ -150,8 +191,8 @@ class ApplicationInstance : public ApplicationFramework
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
 	void BuildSceneGeometry();
+	void LoadSkinnedModel();
 	void BuildSkullGeometry();
-	void DefineSkullAnimation();
 	void BuildPipelineStateObjects();
 	void BuildFrameResources();
 	void BuildMaterials();
@@ -213,6 +254,7 @@ bool ApplicationInstance::init()
 								   mCommandList.Get(),
 								   mMainWindowWidth, mMainWindowHeight);
 
+	LoadSkinnedModel();
 	LoadTextures();
 	BuildRootSignatures();
 	BuildAmbientOcclusionRootSignatures();
@@ -220,7 +262,6 @@ bool ApplicationInstance::init()
 	BuildShadersAndInputLayout();
 	BuildSceneGeometry();
 	BuildSkullGeometry();
-	DefineSkullAnimation();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -293,20 +334,20 @@ void ApplicationInstance::update(GameTimer& timer)
 {
 	OnKeyboardEvent(timer);
 
-	// animate skull
-	{
-		mAnimationTime += timer.GetDeltaTime();
+	//// animate skull
+	//{
+	//	mAnimationTime += timer.GetDeltaTime();
 
-		if (mAnimationTime >= mSkullAnimation.GetEndTime())
-		{
-			// roll back animation
-			mAnimationTime = 0.0f;
-		}
+	//	if (mAnimationTime >= mSkullAnimation.GetEndTime())
+	//	{
+	//		// roll back animation
+	//		mAnimationTime = 0.0f;
+	//	}
 
-		mSkullAnimation.interpolate(mAnimationTime, mSkullRenderItem->world);
-		//mSkullRenderItem->world = mSkullWorld;
-		mSkullRenderItem->DirtyFramesCount = kFrameResourcesCount;
-	}
+	//	mSkullAnimation.interpolate(mAnimationTime, mSkullRenderItem->world);
+	//	//mSkullRenderItem->world = mSkullWorld;
+	//	mSkullRenderItem->DirtyFramesCount = kFrameResourcesCount;
+	//}
 
 	mCurrentFrameResourceIndex = (mCurrentFrameResourceIndex + 1) % kFrameResourcesCount;
 	mCurrentFrameResource = mFrameResources[mCurrentFrameResourceIndex].get();
@@ -334,6 +375,7 @@ void ApplicationInstance::update(GameTimer& timer)
 
 	AnimateMaterials(timer);
 	UpdateObjectCBs(timer);
+	UpdateSkinnedCBs(timer);
 	UpdateMaterialBuffer(timer);
 	UpdateShadowTransform(timer);
 	UpdateMainPassCB(timer);
@@ -374,88 +416,156 @@ void ApplicationInstance::draw(GameTimer& timer)
 
 	// bind all materials
 	auto MaterialBuffer = mCurrentFrameResource->MaterialBuffer->GetResource();
-	mCommandList->SetGraphicsRootShaderResourceView(2, MaterialBuffer->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootShaderResourceView(3, MaterialBuffer->GetGPUVirtualAddress());
 
 	// bind all diffuse/normal textures
-	mCommandList->SetGraphicsRootDescriptorTable(4, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	mCommandList->SetGraphicsRootDescriptorTable(5, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	// ==================== SHADOW PASS ====================
+	{
+		// bind null cube map and null shadom map textures for shadow pass
+		mCommandList->SetGraphicsRootDescriptorTable(4, mNullSRV);
 
-	// bind null cube map and null shadom map textures for shadow pass
-	mCommandList->SetGraphicsRootDescriptorTable(3, mNullSRV);
-
-	DrawSceneToShadowMap();
+		DrawSceneToShadowMap();
+	}
 
 	// ==================== NORMAL/DEPTH PASS ====================
-
-	DrawNormalsAndDepth();
+	{
+		DrawNormalsAndDepth();
+	}
 
 	// ==================== SSAO PASS ====================
+	{
+		PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(2), "ambient occlusion");
 
-	mCommandList->SetGraphicsRootSignature(mAmbientOcclusionRootSignature.Get());
-	mSSAO->ComputeAmbientOcclusion(mCommandList.Get(), mCurrentFrameResource, 3);
+		if (mIsAmbientOcclusionEnabled)
+		{
+
+			mCommandList->SetGraphicsRootSignature(mAmbientOcclusionRootSignature.Get());
+			mSSAO->ComputeAmbientOcclusion(mCommandList.Get(), mCurrentFrameResource, 2);
+		}
+		else
+		{
+			mSSAO->ClearAmbientMap(mCommandList.Get());
+		}
+
+		PIXEndEvent(mCommandList.Get());
+	}
 
 	// ==================== MAIN PASS ====================
-
-	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
-	// rebind state whenever graphics root signature changes
 	{
-		// bind all materials
-		auto MaterialBuffer = mCurrentFrameResource->MaterialBuffer->GetResource();
-		mCommandList->SetGraphicsRootShaderResourceView(2, MaterialBuffer->GetGPUVirtualAddress());
+		PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(3), "main pass");
 
-		// bind all diffuse/normal textures
-		mCommandList->SetGraphicsRootDescriptorTable(4, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+		// rebind state whenever graphics root signature changes
+		{
+			// bind all materials
+			auto MaterialBuffer = mCurrentFrameResource->MaterialBuffer->GetResource();
+			mCommandList->SetGraphicsRootShaderResourceView(3, MaterialBuffer->GetGPUVirtualAddress());
+
+			// bind all diffuse/normal textures
+			mCommandList->SetGraphicsRootDescriptorTable(5, mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		}
+
+		mCommandList->RSSetViewports(1, &mScreenViewport);
+		mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+		{
+			CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(),
+																					   D3D12_RESOURCE_STATE_PRESENT,
+																					   D3D12_RESOURCE_STATE_RENDER_TARGET);
+			mCommandList->ResourceBarrier(1, &transition);
+		}
+
+		mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+		
+		if (mIsWireFrameEnabled)
+		{
+			mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
+		}
+
+		{
+			D3D12_CPU_DESCRIPTOR_HANDLE rtv = GetCurrentBackBufferView();
+			D3D12_CPU_DESCRIPTOR_HANDLE dsv = GetDepthStencilView();
+			mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
+		}
+
+		// bind main pass constant buffer
+		auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
+		mCommandList->SetGraphicsRootConstantBufferView(2, MainPassCB->GetGPUVirtualAddress());
+
+		// bind sky cube map and shadow map textures
+		{
+			CD3DX12_GPU_DESCRIPTOR_HANDLE SkyTextureDescriptor(mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+			SkyTextureDescriptor.Offset(mSkyTextureHeapIndex, mCBVSRVUAVDescriptorSize);
+			mCommandList->SetGraphicsRootDescriptorTable(4, SkyTextureDescriptor);
+		}
+
+		auto AppendSuffix = [this](std::string& state)
+		{
+			if (mIsWireFrameEnabled)
+			{
+				state += "_wireframe";
+			}
+			else if (mIsNormalMappingEnabled)
+			{
+				state += "_normal_mapping";
+			}
+		};
+
+		// draw opaque
+		{
+			PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(5), "opaque");
+
+			std::string state = "opaque";
+			AppendSuffix(state);
+
+			mCommandList->SetPipelineState(mPipelineStateObjects[state].Get());
+			DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
+
+			PIXEndEvent(mCommandList.Get());
+		}
+
+		// draw skinned
+		{
+			PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(6), "skinned");
+
+			std::string state = "skinned";
+			AppendSuffix(state);
+
+			mCommandList->SetPipelineState(mPipelineStateObjects[state].Get());
+			DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::skinned)]);
+
+			PIXEndEvent(mCommandList.Get());
+		}
+
+		// draw sky
+		{
+			PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(7), "sky");
+
+			mCommandList->SetPipelineState(mPipelineStateObjects[mIsWireFrameEnabled ? "sky_wireframe" : "sky"].Get());
+			DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::sky)]);
+
+			PIXEndEvent(mCommandList.Get());
+		}
+
+		PIXEndEvent(mCommandList.Get());
 	}
 
-	mCommandList->RSSetViewports(1, &mScreenViewport);
-	mCommandList->RSSetScissorRects(1, &mScissorRect);
-
+	// ==================== DEBUG PASS ====================
 	{
-		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(GetCurrentBackBuffer(),
-																				   D3D12_RESOURCE_STATE_PRESENT,
-																				   D3D12_RESOURCE_STATE_RENDER_TARGET);
-		mCommandList->ResourceBarrier(1, &transition);
+		PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(4), "debug pass");
+
+		if (mIsShadowDebugViewEnabled) // TODO: shadow or ambient
+		{
+			// draw debug
+			mCommandList->SetPipelineState(mPipelineStateObjects["debug"].Get());
+			DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::debug)]);
+		}
+
+		PIXEndEvent(mCommandList.Get());
 	}
-
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
-	//mCommandList->ClearDepthStencilView(GetDepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1, 0, 0, nullptr);
-
-	{
-		D3D12_CPU_DESCRIPTOR_HANDLE rtv = GetCurrentBackBufferView();
-		D3D12_CPU_DESCRIPTOR_HANDLE dsv = GetDepthStencilView();
-		mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
-	}
-
-	// rebind diffuse/normal textures ?
-
-	// bind main pass constant buffer
-	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
-	mCommandList->SetGraphicsRootConstantBufferView(1, MainPassCB->GetGPUVirtualAddress());
-	
-	// bind sky cube map and shadow map textures
-	{
-		CD3DX12_GPU_DESCRIPTOR_HANDLE SkyTextureDescriptor(mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-		SkyTextureDescriptor.Offset(mSkyTextureHeapIndex, mCBVSRVUAVDescriptorSize);
-		mCommandList->SetGraphicsRootDescriptorTable(3, SkyTextureDescriptor);
-	}
-
-	// draw scene
-	const std::string state = mIsWireFrameEnabled ? "opaque_wireframe" : mIsNormalMappingEnabled ? "opaque_normal_mapping" : "opaque";
-	mCommandList->SetPipelineState(mPipelineStateObjects[state].Get());
-	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
-
-	if (mIsShadowDebugViewEnabled)
-	{
-		// draw debug
-		mCommandList->SetPipelineState(mPipelineStateObjects["debug"].Get()); // shadow or ambient
-		DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::debug)]);
-	}
-
-	// draw sky
-	mCommandList->SetPipelineState(mPipelineStateObjects[mIsWireFrameEnabled ? "sky_wireframe" : "sky"].Get());
-	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::sky)]);
 
 #if IS_IMGUI_ENABLED
 	// imgui
@@ -631,6 +741,20 @@ void ApplicationInstance::UpdateObjectCBs(const GameTimer& timer)
 	}
 }
 
+void ApplicationInstance::UpdateSkinnedCBs(const GameTimer& timer)
+{
+	auto CurrentSkinnedCB = mCurrentFrameResource->SkinnedCB.get();
+
+	mSkinnedModelInstance->UpdateSkinnedAnimation(timer.GetDeltaTime());
+
+	SkinnedConstants buffer;
+	std::copy(std::begin(mSkinnedModelInstance->FinalTransforms),
+			  std::end(mSkinnedModelInstance->FinalTransforms),
+			  &buffer.BoneTransform[0]);
+
+	CurrentSkinnedCB->CopyData(0, buffer);
+}
+
 void ApplicationInstance::UpdateMaterialBuffer(const GameTimer& timer)
 {
 	auto CurrentMaterialBuffer = mCurrentFrameResource->MaterialBuffer.get();
@@ -725,11 +849,11 @@ void ApplicationInstance::UpdateMainPassCB(const GameTimer& timer)
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
 	mMainPassCB.lights[0].direction = mRotatedLightDirections[0];
-	mMainPassCB.lights[0].strength = { 0.6f, 0.6f, 0.6f };
+	mMainPassCB.lights[0].strength = { 0.9f, 0.9f, 0.7f };
 	mMainPassCB.lights[1].direction = mRotatedLightDirections[1];
-	mMainPassCB.lights[1].strength = { 0.3f, 0.3f, 0.3f };
+	mMainPassCB.lights[1].strength = { 0.4f, 0.4f, 0.4f };;
 	mMainPassCB.lights[2].direction = mRotatedLightDirections[2];
-	mMainPassCB.lights[2].strength = { 0.15f, 0.15f, 0.15f };
+	mMainPassCB.lights[2].strength = { 0.2f, 0.2f, 0.2f };
 
 	auto CurrentMainPassCB = mCurrentFrameResource->MainPassCB.get();
 	CurrentMainPassCB->CopyData(0, mMainPassCB);
@@ -802,8 +926,14 @@ void ApplicationInstance::UpdateAmbientOcclusionCB(const GameTimer& timer)
 
 void ApplicationInstance::LoadTextures()
 {
-	const auto LoadTexture = [this](const std::string& name)
+	const auto LoadTexture = [this](const std::string& name) -> bool
 	{
+		if (mTextures.find(name) != mTextures.end())
+		{
+			// do not load same texture twice
+			return false;
+		}
+
 		// very bad way to convert a narrow string to a wide string
 		const std::wstring wname(name.begin(), name.end());
 
@@ -821,50 +951,70 @@ void ApplicationInstance::LoadTextures()
 														texture->name.size(),
 														texture->name.data()));
 
+		mTextureNames.push_back(texture->name);
 		mTextures[texture->name] = std::move(texture);
 
+		return true;
 	};
 
-	const std::array<const std::string, 8> textures =
+	std::vector<std::string> textures =
 	{
 		"bricks2",
 		"bricks2_nmap",
 		"tile",
 		"tile_nmap",
 		"white1x1",
-		"default_nmap",
-		"WoodCrate01",
-		"sunsetcube1024"
+		"default_nmap"
 	};
 
 	for (const std::string& texture : textures)
 	{
 		LoadTexture(texture);
 	}
+
+	mSkinnedTextureHeapIndex = mTextures.size();
+
+	for (const auto& material : mSkinnedMaterials)
+	{
+		std::string diffuse = material.DiffuseMapName;
+		std::string normal = material.NormalMapName;
+
+		diffuse = diffuse.substr(0, diffuse.find_last_of("."));
+		normal = normal.substr(0, normal.find_last_of("."));
+
+		LoadTexture(diffuse);
+		LoadTexture(normal);
+	}
+
+	// sky cube map is the last texture
+	mSkyTextureHeapIndex = mTextures.size();
+	LoadTexture("desertcube1024");
 }
 
 void ApplicationInstance::BuildRootSignatures()
 {
 	// perfomance TIP: order from most frequent to least frequent
-	CD3DX12_ROOT_PARAMETER params[5];
+	CD3DX12_ROOT_PARAMETER params[6];
 
 	// object constant buffer (b0)
 	params[0].InitAsConstantBufferView(0);
-	// main pass constant buffer (b1)
+	// skinned constant buffer (b1)
 	params[1].InitAsConstantBufferView(1);
+	// main pass constant buffer (b2)
+	params[2].InitAsConstantBufferView(2);
 	// all materials (t0, space1)
-	params[2].InitAsShaderResourceView(0, 1);
+	params[3].InitAsShaderResourceView(0, 1);
 	// sky cube map, shadow map and ambient map textures (t0, space0)
 	{
 		CD3DX12_DESCRIPTOR_RANGE TextureTable;
 		TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0);
-		params[3].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
+		params[4].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
 	}
 	// all other diffuse and normal textures (t3, space0)
 	{
 		CD3DX12_DESCRIPTOR_RANGE TextureTable;
 		TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, mTextures.size() - 1, 3, 0);
-		params[4].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
+		params[5].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
 	}
 
 	auto StaticSamplers = GetStaticSamplers();
@@ -903,15 +1053,15 @@ void ApplicationInstance::BuildAmbientOcclusionRootSignatures()
 
 	// ambient occlusion constant buffer (b0)
 	params[0].InitAsConstantBufferView(0);
-	// ??? (b1)
+	// horizontal blur flag costant buffer (b1)
 	params[1].InitAsConstants(1, 1);
-	// normals and depth ??? (t0, space0)
+	// normals and depth maps (t0, space0)
 	{
 		CD3DX12_DESCRIPTOR_RANGE TextureTable;
 		TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0);
 		params[2].InitAsDescriptorTable(1, &TextureTable, D3D12_SHADER_VISIBILITY_PIXEL);
 	}
-	// random offsets ??? (t2, space0)
+	// random vectors map (t2, space0)
 	{
 		CD3DX12_DESCRIPTOR_RANGE TextureTable;
 		TextureTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2, 0);
@@ -982,7 +1132,7 @@ void ApplicationInstance::BuildDescriptorHeaps()
 	// create SRV heap
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-		desc.NumDescriptors = mTextures.size() + 1 + 5 + 3; // +1 shadow map +1 ambient map +1 null cube map +2 null texture 2D
+		desc.NumDescriptors = mTextures.size() + 1 + 5 + 3; // +1 shadow map +5 ssao +1 null cube map +2 null texture 2D
 		desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
@@ -1024,32 +1174,13 @@ void ApplicationInstance::BuildDescriptorHeaps()
 		descriptor.Offset(1, mCBVSRVUAVDescriptorSize);
 	};
 
-	const std::array<const std::string, 8> textures =
+	for (UINT i = 0; i < mTextureNames.size() - 1; ++i)
 	{
-		"bricks2",
-		"bricks2_nmap",
-		"tile",
-		"tile_nmap",
-		"white1x1",
-		"default_nmap",
-		"WoodCrate01",
-		"sunsetcube1024"
-	};
-
-	for (const auto& name : textures)
-	{
-		const auto& texture = mTextures[name]->resource.Get();
-
-		if (name == "sunsetcube1024")
-		{
-			CreateSRV(texture, D3D12_SRV_DIMENSION_TEXTURECUBE);
-			mSkyTextureHeapIndex = mTextures.size() - 1;
-		}
-		else
-		{
-			CreateSRV(texture);
-		}
+		CreateSRV(mTextures[mTextureNames[i]]->resource.Get());
 	}
+
+	// sky cube map is the last texture
+	CreateSRV(mTextures[mTextureNames.back()]->resource.Get(), D3D12_SRV_DIMENSION_TEXTURECUBE);
 
 	auto srvCpuStart = mCBVSRVUAVDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	auto srvGpuStart = mCBVSRVUAVDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
@@ -1106,6 +1237,12 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 		nullptr, nullptr
 	};
 
+	const D3D_SHADER_MACRO skinned[] =
+	{
+		"SKINNED", "1",
+		nullptr, nullptr
+	};
+
 	using ShaderData = std::tuple<const std::string,		// name
 								  const std::wstring,		// path
 								  const D3D_SHADER_MACRO*,	// defines
@@ -1115,10 +1252,12 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 	const std::vector<ShaderData> shaders =
 	{
 		{"VS", L"shaders/default.hlsl", nullptr, "VS", "vs_5_1"},
+		{"SkinnedVS", L"shaders/default.hlsl", skinned, "VS", "vs_5_1"},
 		{"PS", L"shaders/default.hlsl", nullptr, "PS", "ps_5_1"},
 		{"NormalMappingPS", L"shaders/default.hlsl", NormalMapping, "PS", "ps_5_1"},
 
 		{"ShadowVS", L"shaders/shadow.hlsl", nullptr, "VS", "vs_5_1"},
+		{"SkinnedShadowVS", L"shaders/shadow.hlsl", skinned, "VS", "vs_5_1"},
 		{"ShadowPS", L"shaders/shadow.hlsl", nullptr, "PS", "ps_5_1"},
 		{"ShadowAlphaTestPS", L"shaders/shadow.hlsl", AlphaTest, "PS", "ps_5_1"},
 
@@ -1126,6 +1265,7 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 		{"DebugPS", L"shaders/debug.hlsl", nullptr, "PS", "ps_5_1"},
 
 		{"NormalsVS", L"shaders/normals.hlsl", nullptr, "VS", "vs_5_1"},
+		{"SkinnedNormalsVS", L"shaders/normals.hlsl", skinned, "VS", "vs_5_1"},
 		{"NormalsPS", L"shaders/normals.hlsl", nullptr, "PS", "ps_5_1"},
 
 		{"AmbientOcclusionVS", L"shaders/ssao.hlsl", nullptr, "VS", "vs_5_1"},
@@ -1148,6 +1288,16 @@ void ApplicationInstance::BuildShadersAndInputLayout()
 		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	};
+
+	mSkinnedInputLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "WEIGHTS",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "INDICES",  0, DXGI_FORMAT_R8G8B8A8_UINT,   0, 56, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -1377,40 +1527,103 @@ void ApplicationInstance::BuildSkullGeometry()
 	mMeshGeometries[geometry->name] = std::move(geometry);
 }
 
-void ApplicationInstance::DefineSkullAnimation()
+//void ApplicationInstance::DefineSkullAnimation()
+//{
+//	XMVECTOR q0 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(30.0f));
+//	XMVECTOR q1 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 1.0f, 2.0f, 0.0f), XMConvertToRadians(45.0f));
+//	XMVECTOR q2 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(-30.0f));
+//	XMVECTOR q3 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), XMConvertToRadians(70.0f));
+//
+//	// define the animation keyframes
+//	mSkullAnimation.KeyFrames.resize(5);
+//
+//	mSkullAnimation.KeyFrames[0].time = 0.0f;
+//	mSkullAnimation.KeyFrames[0].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
+//	mSkullAnimation.KeyFrames[0].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+//	XMStoreFloat4(&mSkullAnimation.KeyFrames[0].rotation, q0);
+//
+//	mSkullAnimation.KeyFrames[1].time = 2.0f;
+//	mSkullAnimation.KeyFrames[1].translation = XMFLOAT3(0.0f, 2.0f, 10.0f);
+//	mSkullAnimation.KeyFrames[1].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
+//	XMStoreFloat4(&mSkullAnimation.KeyFrames[1].rotation, q1);
+//
+//	mSkullAnimation.KeyFrames[2].time = 4.0f;
+//	mSkullAnimation.KeyFrames[2].translation = XMFLOAT3(7.0f, 0.0f, 0.0f);
+//	mSkullAnimation.KeyFrames[2].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+//	XMStoreFloat4(&mSkullAnimation.KeyFrames[2].rotation, q2);
+//
+//	mSkullAnimation.KeyFrames[3].time = 6.0f;
+//	mSkullAnimation.KeyFrames[3].translation = XMFLOAT3(0.0f, 1.0f, -10.0f);
+//	mSkullAnimation.KeyFrames[3].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
+//	XMStoreFloat4(&mSkullAnimation.KeyFrames[3].rotation, q3);
+//
+//	mSkullAnimation.KeyFrames[4].time = 8.0f;
+//	mSkullAnimation.KeyFrames[4].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
+//	mSkullAnimation.KeyFrames[4].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
+//	XMStoreFloat4(&mSkullAnimation.KeyFrames[4].rotation, q0);
+//}
+
+void ApplicationInstance::LoadSkinnedModel()
 {
-	XMVECTOR q0 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(30.0f));
-	XMVECTOR q1 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 1.0f, 2.0f, 0.0f), XMConvertToRadians(45.0f));
-	XMVECTOR q2 = XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), XMConvertToRadians(-30.0f));
-	XMVECTOR q3 = XMQuaternionRotationAxis(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), XMConvertToRadians(70.0f));
+	std::vector<M3DLoader::SkinnedVertex> vertices;
+	std::vector<std::uint16_t> indices;
 
-	// define the animation keyframes
-	mSkullAnimation.KeyFrames.resize(5);
+	M3DLoader m3dLoader;
+	m3dLoader.LoadM3d(PREFIX("../models/soldier.m3d"),
+					  vertices,
+					  indices,
+					  mSkinnedSubsets,
+					  mSkinnedMaterials,
+					  mSkinnedData);
 
-	mSkullAnimation.KeyFrames[0].time = 0.0f;
-	mSkullAnimation.KeyFrames[0].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
-	mSkullAnimation.KeyFrames[0].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
-	XMStoreFloat4(&mSkullAnimation.KeyFrames[0].rotation, q0);
+	mSkinnedModelInstance = std::make_unique<SkinnedModelInstance>();
+	mSkinnedModelInstance->SkinnedInfo = &mSkinnedData;
+	mSkinnedModelInstance->FinalTransforms.resize(mSkinnedData.GetBoneCount());
+	mSkinnedModelInstance->ClipName = "Take1";
+	mSkinnedModelInstance->time = 0.0f;
 
-	mSkullAnimation.KeyFrames[1].time = 2.0f;
-	mSkullAnimation.KeyFrames[1].translation = XMFLOAT3(0.0f, 2.0f, 10.0f);
-	mSkullAnimation.KeyFrames[1].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
-	XMStoreFloat4(&mSkullAnimation.KeyFrames[1].rotation, q1);
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(SkinnedVertex);
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
 
-	mSkullAnimation.KeyFrames[2].time = 4.0f;
-	mSkullAnimation.KeyFrames[2].translation = XMFLOAT3(7.0f, 0.0f, 0.0f);
-	mSkullAnimation.KeyFrames[2].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
-	XMStoreFloat4(&mSkullAnimation.KeyFrames[2].rotation, q2);
+	auto geometry = std::make_unique<MeshGeometry>();
+	geometry->name = "soldier";
 
-	mSkullAnimation.KeyFrames[3].time = 6.0f;
-	mSkullAnimation.KeyFrames[3].translation = XMFLOAT3(0.0f, 1.0f, -10.0f);
-	mSkullAnimation.KeyFrames[3].scale = XMFLOAT3(0.5f, 0.5f, 0.5f);
-	XMStoreFloat4(&mSkullAnimation.KeyFrames[3].rotation, q3);
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geometry->VertexBufferCPU));
+	CopyMemory(geometry->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
 
-	mSkullAnimation.KeyFrames[4].time = 8.0f;
-	mSkullAnimation.KeyFrames[4].translation = XMFLOAT3(-7.0f, 0.0f, 0.0f);
-	mSkullAnimation.KeyFrames[4].scale = XMFLOAT3(0.25f, 0.25f, 0.25f);
-	XMStoreFloat4(&mSkullAnimation.KeyFrames[4].rotation, q0);
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geometry->IndexBufferCPU));
+	CopyMemory(geometry->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	geometry->VertexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
+														   mCommandList.Get(),
+														   vertices.data(),
+														   vbByteSize,
+														   geometry->VertexBufferUploader);
+
+	geometry->IndexBufferGPU = Utils::CreateDefaultBuffer(mDevice.Get(),
+														  mCommandList.Get(),
+														  indices.data(),
+														  ibByteSize,
+														  geometry->IndexBufferUploader);
+
+	geometry->VertexByteStride = sizeof(SkinnedVertex);
+	geometry->VertexBufferByteSize = vbByteSize;
+	geometry->IndexFormat = DXGI_FORMAT_R16_UINT;
+	geometry->IndexBufferByteSize = ibByteSize;
+
+	for (UINT i = 0; i < mSkinnedSubsets.size(); ++i)
+	{
+		SubMeshGeometry submesh;
+		const std::string name = "sm_" + std::to_string(i);
+
+		submesh.IndexCount = mSkinnedSubsets[i].FaceCount * 3;
+		submesh.StartIndexLocation = mSkinnedSubsets[i].FaceStart * 3;
+		submesh.BaseVertexLocation = 0;
+
+		geometry->DrawArgs[name] = submesh;
+	}
+
+	mMeshGeometries[geometry->name] = std::move(geometry);
 }
 
 void ApplicationInstance::BuildPipelineStateObjects()
@@ -1463,19 +1676,64 @@ void ApplicationInstance::BuildPipelineStateObjects()
 
 	// opaque wireframe
 	{
-		descs["opaque_wireframe"] = base;
-		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["opaque_wireframe"];
+		const std::string name = "opaque_wireframe";
+		descs[name] = descs["opaque"];
 
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
 		desc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 
-		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["opaque_wireframe"])));
+		desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
+	}
+
+	// skinned
+	{
+		const std::string name = "skinned";
+		descs[name] = descs["opaque"];
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
+		desc.InputLayout.pInputElementDescs = mSkinnedInputLayout.data();
+		desc.InputLayout.NumElements = mSkinnedInputLayout.size();
+		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["SkinnedVS"]->GetBufferPointer());
+		desc.VS.BytecodeLength = mShaders["SkinnedVS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
+	}
+
+	// skinned normal mapping
+	{
+		const std::string name = "skinned_normal_mapping";
+		descs[name] = descs["skinned"];
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
+		desc.PS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["NormalMappingPS"]->GetBufferPointer());
+		desc.PS.BytecodeLength = mShaders["NormalMappingPS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
+	}
+
+	// skinned wireframe
+	{
+		const std::string name = "skinned_wireframe";
+		descs[name] = descs["skinned"];
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
+		desc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
 	}
 
 	// shadow
 	{
-		descs["shadow"] = base;
-		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["shadow"];
+		const std::string name = "shadow";
+		descs[name] = base;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
 
 		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["ShadowVS"]->GetBufferPointer());
 		desc.VS.BytecodeLength = mShaders["ShadowVS"]->GetBufferSize();
@@ -1490,13 +1748,30 @@ void ApplicationInstance::BuildPipelineStateObjects()
 		desc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
 		desc.NumRenderTargets = 0;
 
-		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["shadow"])));
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
+	}
+
+	// skinned shadow
+	{
+		const std::string name = "skinned_shadow";
+		descs[name] = descs["shadow"];
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
+
+		desc.InputLayout.pInputElementDescs = mSkinnedInputLayout.data();
+		desc.InputLayout.NumElements = mSkinnedInputLayout.size();
+		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["SkinnedShadowVS"]->GetBufferPointer());
+		desc.VS.BytecodeLength = mShaders["SkinnedShadowVS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
 	}
 
 	// normals
 	{
-		descs["normals"] = base;
-		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs["normals"];
+		const std::string name = "normals";
+		descs[name] = base;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
 
 		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["NormalsVS"]->GetBufferPointer());
 		desc.VS.BytecodeLength = mShaders["NormalsVS"]->GetBufferSize();
@@ -1508,14 +1783,29 @@ void ApplicationInstance::BuildPipelineStateObjects()
 		desc.SampleDesc.Quality = 0;
 		desc.DSVFormat = mDepthStencilFormat;
 
-		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects["normals"])));
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
+	}
+
+	// skinned normals
+	{
+		const std::string name = "skinned_normals";
+		descs[name] = descs["normals"];
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
+
+		desc.InputLayout.pInputElementDescs = mSkinnedInputLayout.data();
+		desc.InputLayout.NumElements = mSkinnedInputLayout.size();
+		desc.VS.pShaderBytecode = reinterpret_cast<BYTE*>(mShaders["SkinnedNormalsVS"]->GetBufferPointer());
+		desc.VS.BytecodeLength = mShaders["SkinnedNormalsVS"]->GetBufferSize();
+
+		ThrowIfFailed(mDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&mPipelineStateObjects[name])));
 	}
 
 	// ambient occlusion
 	{
 		const std::string name = "AmbientOcclusion";
-
 		descs[name] = base;
+
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
 
 		desc.InputLayout = { nullptr, 0 };
@@ -1540,8 +1830,8 @@ void ApplicationInstance::BuildPipelineStateObjects()
 	// ambient occlusion blur
 	{
 		const std::string name = "AmbientOcclusionBlur";
-
 		descs[name] = descs["AmbientOcclusion"];
+
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc = descs[name];
 
 		desc.InputLayout = { nullptr, 0 };
@@ -1604,6 +1894,7 @@ void ApplicationInstance::BuildFrameResources()
 		mFrameResources.push_back(std::make_unique<FrameResource>(mDevice.Get(),
 																  2, // +1 shadow
 																  mRenderItems.size(),
+																  1,
 																  mMaterials.size()));
 	}
 }
@@ -1616,15 +1907,15 @@ void ApplicationInstance::BuildMaterials()
 									const XMFLOAT4,		// diffuse
 									const XMFLOAT3,		// fresnel
 									const float>;		// roughness
-
-	const std::array<MaterialInfo, 6> materials =
+	
+	const int i = mTextures.size() - 1; // sky texture index
+	const std::array<MaterialInfo, 5> materials =
 	{
 		MaterialInfo("bricks", 0, 1, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 0.3f),
 		MaterialInfo("tile",   2, 3, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), XMFLOAT3(0.20f, 0.20f, 0.20f), 0.1f),
 		MaterialInfo("mirror", 4, 5, XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f),
 		MaterialInfo("skull",  4, 5, XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f), XMFLOAT3(0.60f, 0.60f, 0.60f), 0.2f),
-		MaterialInfo("crate",  6, 5, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.7f),
-		MaterialInfo("sky",    7, 8, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 1.0f)
+		MaterialInfo("sky",    i, 0, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.10f, 0.10f, 0.10f), 1.0f)
 	};
 
 	UINT MaterialBufferIndex = 0;
@@ -1639,6 +1930,34 @@ void ApplicationInstance::BuildMaterials()
 		material->DiffuseAlbedo = diffuse;
 		material->FresnelR0 = fresnel;
 		material->roughness = roughness;
+
+		mMaterials[material->name] = std::move(material);
+	}
+
+	//UINT SkinnedTextureHeapIndex = mSkinnedTextureHeapIndex;
+
+	for (const auto& skinned : mSkinnedMaterials)
+	{
+
+		std::string diffuse = skinned.DiffuseMapName;
+		std::string normal = skinned.NormalMapName;
+
+		diffuse = diffuse.substr(0, diffuse.find_last_of("."));
+		normal = normal.substr(0, normal.find_last_of("."));
+
+		int DiffuseIndex = std::distance(mTextureNames.begin(), std::find(mTextureNames.begin(), mTextureNames.end(), diffuse));
+		int NormalIndex = std::distance(mTextureNames.begin(), std::find(mTextureNames.begin(), mTextureNames.end(), normal));;
+
+		auto material = std::make_unique<Material>();
+		material->name = skinned.Name;
+		material->ConstantBufferIndex = MaterialBufferIndex++;
+		//material->DiffuseSRVHeapIndex = SkinnedTextureHeapIndex++;
+		//material->NormalSRVHeapIndex = SkinnedTextureHeapIndex++;
+		material->DiffuseSRVHeapIndex = DiffuseIndex;
+		material->NormalSRVHeapIndex = NormalIndex;
+		material->DiffuseAlbedo = skinned.DiffuseAlbedo;
+		material->FresnelR0 = skinned.FresnelR0;
+		material->roughness = skinned.Roughness;
 
 		mMaterials[material->name] = std::move(material);
 	}
@@ -1662,8 +1981,8 @@ void ApplicationInstance::BuildRenderItems()
 		{RenderLayer::debug,  "quad",   "meshes", "bricks", XMMatrixIdentity(),
 															XMMatrixIdentity()},
 		{RenderLayer::opaque, "box",    "meshes", "bricks", XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f),
-															XMMatrixScaling(1.0f, 0.5f, 1.0f)},
-		{RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f),
+															XMMatrixIdentity()},
+		{RenderLayer::opaque, "skull",  "skull",  "skull",  XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f),
 															XMMatrixIdentity()},
 		{RenderLayer::opaque, "grid",   "meshes", "tile",   XMMatrixIdentity(),
 															XMMatrixScaling(8.0f, 8.0f, 1.0f)}
@@ -1714,12 +2033,44 @@ void ApplicationInstance::BuildRenderItems()
 
 		mRenderItems.push_back(std::move(item));
 	}
+
+	for (UINT i = 0; i < mSkinnedMaterials.size(); ++i)
+	{
+		auto item = std::make_unique<RenderItem>();
+
+		const std::string mesh = "sm_" + std::to_string(i);
+
+		// reflect to change coordinate system from the RHS the data was exported out as
+		const XMMATRIX S = XMMatrixScaling(0.05f, 0.05f, -0.05f);
+		const XMMATRIX R = XMMatrixRotationY(XM_PI);
+		const XMMATRIX T = XMMatrixTranslation(0.0f, 0.0f, -5.0f);
+		XMStoreFloat4x4(&item->world, S * R * T);
+
+		item->TexCoordTransform = MathHelper::Identity4x4();
+		item->ConstantBufferIndex = ObjectCBIndex++;
+		item->material = mMaterials[mSkinnedMaterials[i].Name].get();
+		item->geometry = mMeshGeometries["soldier"].get();
+		item->PrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		item->IndexCount = item->geometry->DrawArgs[mesh].IndexCount;
+		item->StartIndexLocation = item->geometry->DrawArgs[mesh].StartIndexLocation;
+		item->BaseVertexLocation = item->geometry->DrawArgs[mesh].BaseVertexLocation;
+
+		// all render items share the same skinned model instance
+		item->SkinnedConstantBufferIndex = 0;
+		item->pSkinnedModelInstance = mSkinnedModelInstance.get();
+		
+		mLayerRenderItems[static_cast<int>(RenderLayer::skinned)].push_back(item.get());
+		mRenderItems.push_back(std::move(item));
+	}
 }
 
 void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, const std::vector<RenderItem*>& RenderItems)
 {
 	const UINT ObjectCBByteSize = Utils::GetConstantBufferByteSize(sizeof(ObjectConstants));
+	const UINT SkinnedCBByteSize = Utils::GetConstantBufferByteSize(sizeof(SkinnedConstants));
+
 	const auto ObjectCB = mCurrentFrameResource->ObjectCB->GetResource();
+	const auto SkinnedCB = mCurrentFrameResource->SkinnedCB->GetResource();
 
 	for (const auto& item : RenderItems)
 	{
@@ -1736,8 +2087,21 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 		CommandList->IASetPrimitiveTopology(item->PrimitiveTopology);
 
 		// bind object constant buffer
-		const D3D12_GPU_VIRTUAL_ADDRESS ObjectCBAddress = ObjectCB->GetGPUVirtualAddress() + item->ConstantBufferIndex * ObjectCBByteSize;
-		CommandList->SetGraphicsRootConstantBufferView(0, ObjectCBAddress);
+		{
+			const D3D12_GPU_VIRTUAL_ADDRESS ObjectCBAddress = ObjectCB->GetGPUVirtualAddress() + item->ConstantBufferIndex * ObjectCBByteSize;
+			CommandList->SetGraphicsRootConstantBufferView(0, ObjectCBAddress);
+		}
+
+		if (item->pSkinnedModelInstance)
+		{
+			// bind skinned constant buffer
+			const D3D12_GPU_VIRTUAL_ADDRESS SkinnedCBAddress = SkinnedCB->GetGPUVirtualAddress() + item->SkinnedConstantBufferIndex * SkinnedCBByteSize;
+			CommandList->SetGraphicsRootConstantBufferView(1, SkinnedCBAddress);
+		}
+		else
+		{
+			CommandList->SetGraphicsRootConstantBufferView(1, 0);
+		}
 
 		CommandList->DrawIndexedInstanced(item->IndexCount, 1, item->StartIndexLocation, item->BaseVertexLocation, 0);
 	}
@@ -1745,6 +2109,8 @@ void ApplicationInstance::DrawRenderItems(ID3D12GraphicsCommandList* CommandList
 
 void ApplicationInstance::DrawSceneToShadowMap()
 {
+	PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(0), "shadow pass");
+
 	mCommandList->RSSetViewports(1, &mShadowMap->GetViewport());
 	mCommandList->RSSetScissorRects(1, &mShadowMap->GetScissorRect());
 
@@ -1768,10 +2134,13 @@ void ApplicationInstance::DrawSceneToShadowMap()
 	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
 	const UINT MainPassCBByteSize = Utils::GetConstantBufferByteSize(sizeof(MainPassConstants));
 	const D3D12_GPU_VIRTUAL_ADDRESS address = MainPassCB->GetGPUVirtualAddress() + 1 * MainPassCBByteSize;
-	mCommandList->SetGraphicsRootConstantBufferView(1, address);
+	mCommandList->SetGraphicsRootConstantBufferView(2, address);
 
 	mCommandList->SetPipelineState(mPipelineStateObjects["shadow"].Get());
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
+
+	mCommandList->SetPipelineState(mPipelineStateObjects["skinned_shadow"].Get());
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::skinned)]);
 	
 	{
 		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap->GetResource(),
@@ -1779,10 +2148,14 @@ void ApplicationInstance::DrawSceneToShadowMap()
 																				   D3D12_RESOURCE_STATE_GENERIC_READ);
 		mCommandList->ResourceBarrier(1, &transition);
 	}
+
+	PIXEndEvent(mCommandList.Get());
 }
 
 void ApplicationInstance::DrawNormalsAndDepth()
 {
+	PIXBeginEvent(mCommandList.Get(), PIX_COLOR_INDEX(1), "normals and depth");
+
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
@@ -1807,11 +2180,15 @@ void ApplicationInstance::DrawNormalsAndDepth()
 
 	// bind main pass constant buffer
 	auto MainPassCB = mCurrentFrameResource->MainPassCB->GetResource();
-	mCommandList->SetGraphicsRootConstantBufferView(1, MainPassCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(2, MainPassCB->GetGPUVirtualAddress());
 
 	// draw scene normals
 	mCommandList->SetPipelineState(mPipelineStateObjects["normals"].Get());
 	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::opaque)]);
+
+	// draw scene normals
+	mCommandList->SetPipelineState(mPipelineStateObjects["skinned_normals"].Get());
+	DrawRenderItems(mCommandList.Get(), mLayerRenderItems[static_cast<int>(RenderLayer::skinned)]);
 
 	{
 		CD3DX12_RESOURCE_BARRIER transition = CD3DX12_RESOURCE_BARRIER::Transition(NormalMap,
@@ -1819,6 +2196,8 @@ void ApplicationInstance::DrawNormalsAndDepth()
 																				   D3D12_RESOURCE_STATE_GENERIC_READ);
 		mCommandList->ResourceBarrier(1, &transition);
 	}
+
+	PIXEndEvent(mCommandList.Get());
 }
 
 CD3DX12_CPU_DESCRIPTOR_HANDLE ApplicationInstance::GetCpuSRV(const int index) const

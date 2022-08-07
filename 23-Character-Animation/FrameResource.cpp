@@ -3,6 +3,7 @@
 FrameResource::FrameResource(ID3D12Device* device,
 							 const UINT MainPassCount,
 							 const UINT ObjectCount,
+							 const UINT SkinnedCount,
 							 const UINT MaterialCount)
 {
 	ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -11,7 +12,7 @@ FrameResource::FrameResource(ID3D12Device* device,
 	MainPassCB = std::make_unique<UploadBuffer<MainPassConstants>>(device, MainPassCount, true);
 	MaterialBuffer = std::make_unique<UploadBuffer<MaterialData>>(device, MaterialCount, false);
 	ObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(device, ObjectCount, true);
-
+	SkinnedCB = std::make_unique<UploadBuffer<SkinnedConstants>>(device, SkinnedCount, true);
 	AmbientOcclusionCB = std::make_unique<UploadBuffer<AmbientOcclusionConstants>>(device, 1, true);
 }
 

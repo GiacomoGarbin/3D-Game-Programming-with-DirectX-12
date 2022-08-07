@@ -103,4 +103,6 @@ public:
     void ComputeAmbientOcclusion(ID3D12GraphicsCommandList* pCommandList,
                                  FrameResource* pCurrentFrame,
                                  const int kBlurCount);
+
+    void ClearAmbientMap(ID3D12GraphicsCommandList* pCommandList);
 };

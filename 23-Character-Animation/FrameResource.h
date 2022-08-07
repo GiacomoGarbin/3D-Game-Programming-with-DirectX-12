@@ -14,6 +14,11 @@ struct ObjectConstants
 	XMFLOAT3 padding;
 };
 
+struct SkinnedConstants
+{
+	XMFLOAT4X4 BoneTransform[96];
+};
+
 struct MainPassConstants
 {
 	XMFLOAT4X4 view = MathHelper::Identity4x4();
@@ -88,11 +93,22 @@ struct Vertex
 	XMFLOAT3 tangent;
 };
 
+struct SkinnedVertex
+{
+	XMFLOAT3 position;
+	XMFLOAT3 normal;
+	XMFLOAT2 TexCoord;
+	XMFLOAT3 tangent;
+	XMFLOAT3 BoneWeights;
+	BYTE BoneIndices[4];
+};
+
 struct FrameResource
 {
 	FrameResource(ID3D12Device* device,
 				  const UINT MainPassCount,
 				  const UINT ObjectCount,
+				  const UINT SkinnedCount,
 				  const UINT MaterialCount);
 	~FrameResource();
 
@@ -101,6 +117,7 @@ struct FrameResource
 	std::unique_ptr<UploadBuffer<MainPassConstants>> MainPassCB = nullptr;
 	std::unique_ptr<UploadBuffer<MaterialData>> MaterialBuffer = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
+	std::unique_ptr<UploadBuffer<SkinnedConstants>> SkinnedCB = nullptr;
 	std::unique_ptr<UploadBuffer<AmbientOcclusionConstants>> AmbientOcclusionCB = nullptr;
 
 	UINT64 fence = 0;
