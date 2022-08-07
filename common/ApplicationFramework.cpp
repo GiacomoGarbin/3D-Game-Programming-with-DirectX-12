@@ -243,6 +243,11 @@ void ApplicationFramework::OnResize()
 												   &clear,
 												   IID_PPV_ARGS(mDepthStencilBuffer.GetAddressOf())));
 
+	{
+		const std::string name = "DepthStencilBuffer";
+		ThrowIfFailed(mDepthStencilBuffer->SetPrivateData(WKPDID_D3DDebugObjectName, name.size(), name.data()));
+	}
+
 	// depth stencil view
 	{
 		D3D12_DEPTH_STENCIL_VIEW_DESC desc;
